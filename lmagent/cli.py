@@ -22,11 +22,13 @@ def _parse_params(pairs: list[str]) -> dict:
 
 def cmd_models(args, cfg):
     client = LMStudioClient(cfg["server"]["base_url"], cfg["server"]["timeout"])
-    roles = {v: k for k, v in cfg["models"].items()}
+    roles: dict[str, list[str]] = {}
+    for role, model_id in cfg["models"].items():
+        roles.setdefault(model_id, []).append(role)
     for m in client.models():
         state = "LOADED" if m.get("state") == "loaded" else "-"
         ctx = m.get("loaded_context_length") or ""
-        role = roles.get(m["id"], "")
+        role = ", ".join(roles.get(m["id"], []))
         print(f"{state:6} {m['id']:45} {m.get('type', ''):4} {str(ctx):>7} {role}")
 
 
