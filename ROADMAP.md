@@ -32,11 +32,12 @@ In a fresh Claude Code session on another project:
 - [ ] `Index.update` incremental logic with a fake embedder: unchanged, changed, deleted, excluded files.
 - [ ] `_parse_json` / `strip_fences`, config layering.
 
-## 4. Answer on top of search (1-2 h)
+## 4. Answer on top of search (1-2 h). Done 2026-10-07
 
-- [ ] `lmagent search QUERY --ask "question"` and `ask` parameter on `lm_search`: top-k chunks go to the local
+- [x] `lmagent search QUERY --ask "question"` and `ask` parameter on `lm_search`: top-k chunks go to the local
       LLM with the question, only the answer plus the file/line citations come back.
-- [ ] Reuse the `ask` task; cap the context by the planner's budget.
+- [x] Reuse the `ask` task; cap the context by the planner's budget.
+- [x] From the trial: `kind=code|docs` filter, `index.exclude` accepts `dir/` and `path/*` patterns.
 
 ## 5. Guardrails for `rewrite --in-place` (1-2 h). Done 2026-10-07
 

@@ -50,11 +50,20 @@ Flags: `-m MODEL` forces a model, `--strict` forces the role model even if anoth
 lmagent index                         # build/update .lmagent/index/ for the current directory
 lmagent search "where are retries handled" -k 5
 lmagent search "database config" --files
+lmagent search "where is the websocket opened" --kind code     # skip README/markdown hits
+lmagent search "how are retries handled" --ask                 # answer from the top hits, file:line citations
+lmagent search "fillet validation" --kind code --ask "which schema validates the fillet radius?"
 ```
 
 Chunks of ~400 tokens are embedded with the local `embed` model (nomic, with its `search_document:` /
 `search_query:` prefixes). Only new or changed files are re-embedded. The MCP tool `lm_search` refreshes the
 index before every query, so there is no separate indexing step from Claude Code.
+
+`--kind code|docs` filters by file type (prose files tend to outrank code for "where is X" questions).
+`--ask` (CLI) or `ask="..."` (`lm_search`) sends the top `index.answer_k` hits, capped by the context budget,
+to the local model in one `ask` call and returns only the answer with `file:start-end` citations: the
+snippets never reach the caller. `index.exclude` takes file globs, `dir/` for a directory anywhere in the
+tree (vendored forks) and `path/*` patterns.
 
 ## MCP server for Claude Code
 
@@ -194,6 +203,8 @@ C) shell       ──► lmagent run / search ───────────�
 4. Embed the query with the `search_query:` prefix, rank all chunks by cosine similarity, return the top `k`
    as `{file, start_line, end_line, score, text}`; with `files_only`, the best chunk per file.
 5. Typical chain: `lm_search` to find where something lives, then `lm_delegate` with those files.
+6. With `ask`: the top hits (as many as fit the planner's chunk budget) go to the local model with the
+   question in a single `ask` call; the result is the answer plus the hit list without text.
 
 ## Layout
 
@@ -203,6 +214,7 @@ lmagent/
   config.py     layered YAML config
   chunker.py    token counting, splitting, file discovery
   index.py      incremental embedding index and semantic search
+  answer.py     answer a question from the top search hits (search --ask, lm_search ask=)
   tasks/        task templates (prompt, role, mode)
   runner.py     orchestration: routing, chunking, parallel map-reduce, output, log
   cli.py        command line

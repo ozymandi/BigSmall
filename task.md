@@ -100,9 +100,17 @@ Bugs and tuning found:
   non-JSON) reported `NOT written`, second run reported `unchanged`.
 - `summarize` reduce prompt: "each fact appears once".
 
+### Phase 7: answer on top of search (roadmap item 4). Done 2026-10-07
+- `lmagent/answer.py`: top hits (up to `index.answer_k`, capped by the planner budget) + question -> one
+  `ask` call; returns answer with `file:start-end` citations and the hit list without text.
+- CLI `lmagent search Q --ask [QUESTION] --kind code|docs`; MCP `lm_search(kind=, ask=)`.
+- `Index.search(kind=)` masks chunks by extension; `index.exclude` supports `dir/` and `path/*`.
+- Verified on this repo: "how are retries handled" -> correct answer in 5.8 s, 5.1k tokens local,
+  claims checked against `client.py`. The MCP process must be restarted for the new parameters.
+
 ## Next step
 
-Roadmap item 4 (answer on top of search, plus the search tuning from the trial), then 3 (tests), then 6.
+Roadmap item 3 (tests), then 6 (text role model).
 
 ## Open questions
 

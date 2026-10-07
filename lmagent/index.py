@@ -11,6 +11,12 @@ from .client import LMStudioClient, LMStudioError
 
 DOC_PREFIX = "search_document: "
 QUERY_PREFIX = "search_query: "
+DOC_EXTS = {".md", ".markdown", ".rst", ".txt", ".adoc", ".asciidoc", ".org"}
+
+
+def kind_of(rel: str) -> str:
+    """'docs' for prose files, 'code' for everything else. Lets a search skip the README noise."""
+    return "docs" if Path(rel).suffix.lower() in DOC_EXTS else "code"
 
 
 def split_lines(text: str, chunk_tokens: int, overlap_tokens: int) -> list[tuple[int, int, str]]:
@@ -102,10 +108,22 @@ class Index:
             parts = Path(rel).parts
             if set(parts) & SKIP_DIRS or any(p.endswith(".egg-info") for p in parts):
                 continue
-            if any(fnmatch.fnmatch(f.name, pat) for pat in self.exclude):
+            if self._excluded(rel, f.name, parts):
                 continue
             out[rel] = f
         return out
+
+    def _excluded(self, rel: str, name: str, parts: tuple[str, ...]) -> bool:
+        """index.exclude patterns: `dir/` skips that directory anywhere in the tree, otherwise the pattern
+        is matched against the file name and against the path relative to the root (`vendor/*`)."""
+        for pat in self.exclude:
+            if pat.endswith("/"):
+                d = pat.rstrip("/")
+                if any(fnmatch.fnmatch(p, d) for p in parts[:-1]):
+                    return True
+            elif fnmatch.fnmatch(name, pat) or fnmatch.fnmatch(rel, pat):
+                return True
+        return False
 
     def update(self, paths: list[str] | None = None) -> dict:
         """Index new/changed files, drop deleted ones. Returns counts."""
@@ -190,19 +208,23 @@ class Index:
         return stats
 
     # --- search --------------------------------------------------------
-    def search(self, query: str, k: int = 8, files_only: bool = False) -> list[dict]:
+    def search(self, query: str, k: int = 8, files_only: bool = False, kind: str = "all") -> list[dict]:
+        """Top-k chunks by cosine similarity. kind: all | code | docs (by file extension)."""
         if not self.files and not self.load():
             raise LMStudioError(f"No index at {self.dir}. Run `lmagent index` first.")
         if not self.vectors.size:
             return []
         q = self._embed([query], QUERY_PREFIX)[0]
         scores = self.vectors @ q
-        order = np.argsort(-scores)
-        hits: list[dict] = []
         lookup: list[tuple[str, int]] = []
         for rel, info in self.files.items():
             for ci in range(len(info["chunks"])):
                 lookup.append((rel, ci))
+        if kind != "all":
+            mask = np.array([kind_of(rel) == kind for rel, _ in lookup])
+            scores = np.where(mask, scores, -np.inf)
+        order = [int(i) for i in np.argsort(-scores) if np.isfinite(scores[i])]
+        hits: list[dict] = []
         if files_only:
             best: dict[str, dict] = {}
             for idx in order:

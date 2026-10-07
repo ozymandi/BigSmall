@@ -93,7 +93,22 @@ def cmd_search(args, cfg):
     idx = _index(cfg, args.root)
     if not args.no_update:
         idx.update(None)
-    hits = idx.search(args.query, k=args.k, files_only=args.files)
+    if args.ask is not None:
+        from .answer import answer
+        k = args.k or int(cfg["index"].get("answer_k", 12))
+        res = answer(Runner(cfg), idx, args.query, args.ask, k=k, kind=args.kind)
+        if args.json:
+            print(json.dumps(res, ensure_ascii=False, indent=2))
+            return
+        print(res["answer"])
+        print("\nsources:", file=sys.stderr)
+        for h in res["sources"]:
+            print(f"  {h['score']:.3f}  {h['file']}:{h['start_line']}-{h['end_line']}", file=sys.stderr)
+        if res.get("model"):
+            ot = res["offloaded_tokens"]
+            print(f"[{res['model']} | in {ot['in']} / out {ot['out']} tok | {res['elapsed_s']}s]", file=sys.stderr)
+        return
+    hits = idx.search(args.query, k=args.k or 8, files_only=args.files, kind=args.kind)
     if args.json:
         print(json.dumps(hits, ensure_ascii=False, indent=2))
         return
@@ -164,8 +179,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("search", help="semantic search over the embedding index")
     s.add_argument("query")
-    s.add_argument("-k", type=int, default=8, help="number of hits")
+    s.add_argument("-k", type=int, help="number of hits (default 8, or index.answer_k with --ask)")
     s.add_argument("--files", action="store_true", help="one hit per file")
+    s.add_argument("--kind", choices=["all", "code", "docs"], default="all",
+                   help="only code files or only prose files (md, rst, txt)")
+    s.add_argument("--ask", nargs="?", const="", metavar="QUESTION",
+                   help="answer QUESTION (default: the query) from the top hits with the local model; "
+                        "prints the answer with file:line citations instead of the hits")
     s.add_argument("--lines", type=int, default=6, help="snippet lines to show per hit")
     s.add_argument("--no-update", action="store_true", help="do not refresh the index before searching")
     s.add_argument("--root", help="index root (default: current directory)")

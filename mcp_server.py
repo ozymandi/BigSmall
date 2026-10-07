@@ -17,6 +17,7 @@ from lmagent.config import load_config
 # Import at startup on purpose: importing numpy lazily inside a tool call (event-loop thread) deadlocks
 # on Windows while loading its C extension.
 from lmagent.index import Index
+from lmagent.answer import answer
 from lmagent.runner import Runner
 from lmagent.tasks import TASKS
 
@@ -124,16 +125,28 @@ def lm_index(paths: list[str] | None = None, cwd: str = "") -> dict[str, Any]:
 
 
 @mcp.tool()
-def lm_search(query: str, k: int = 8, files_only: bool = False, cwd: str = "") -> dict[str, Any]:
+def lm_search(query: str, k: int = 8, files_only: bool = False, kind: str = "all", ask: str = "",
+              cwd: str = "") -> dict[str, Any]:
     """Semantic search over the project's files using a local embedding model. Finds where something is
     handled by meaning, not by exact words. Returns file, line range, score and snippet per hit.
-    The index is refreshed incrementally before searching. Use the hits as `files` for lm_delegate."""
+    The index is refreshed incrementally before searching. Use the hits as `files` for lm_delegate.
+
+    Args:
+        kind: all | code | docs. Use `code` for "where is X handled" so README/markdown does not outrank code.
+        ask: a question. The top hits are sent to the local model and only its answer with `file:start-end`
+            citations comes back (no snippets). Cheapest way to learn how something works.
+    """
     try:
         idx = _index(cwd or None)
         stats = idx.update(None)
-        hits = idx.search(query, k=k, files_only=files_only)
-        return {"hits": hits, "index": {"files": stats["total_files"], "chunks": stats["total_chunks"],
-                                       "reindexed": stats["indexed"]}}
+        index_info = {"files": stats["total_files"], "chunks": stats["total_chunks"], "reindexed": stats["indexed"]}
+        if ask:
+            runner = _runner(cwd or None)
+            res = answer(runner, idx, query, ask, k=max(k, int(runner.cfg["index"].get("answer_k", 12))), kind=kind)
+            res["index"] = index_info
+            return res
+        hits = idx.search(query, k=k, files_only=files_only, kind=kind)
+        return {"hits": hits, "index": index_info}
     except (LMStudioError, OSError, ValueError) as e:
         return {"error": str(e)}
 

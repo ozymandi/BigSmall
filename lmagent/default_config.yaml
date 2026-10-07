@@ -40,6 +40,8 @@ index:
   overlap_tokens: 40
   batch: 32               # texts per embeddings request
   exclude: ["*.lock", "*.min.js", "*.min.css", "*.map", "*.svg", "*.ipynb", "package-lock.json", "yarn.lock"]
+                          # file-name globs; "dir/" skips that directory anywhere (vendored forks), "vendor/*" a path
+  answer_k: 12            # hits handed to the model for `search --ask` / lm_search(ask=...), capped by the context budget
 
 output:
   dir: .lmagent/out       # relative to the working directory
