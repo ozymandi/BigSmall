@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lmagent"
+version = "0.1.0"
+description = "Delegate token-heavy, simple tasks to local models served by LM Studio."
+requires-python = ">=3.11"
+dependencies = [
+    "httpx>=0.27",
+    "pyyaml>=6",
+    "tiktoken>=0.7",
+    "mcp>=1.2",
+]
+
+[project.scripts]
+lmagent = "lmagent.cli:main"
+
+[tool.setuptools]
+packages = ["lmagent", "lmagent.tasks"]
+
+[tool.setuptools.package-data]
+lmagent = ["default_config.yaml"]
