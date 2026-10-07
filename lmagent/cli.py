@@ -75,8 +75,22 @@ def cmd_run(args, cfg):
 
 
 def cmd_stats(args, cfg):
-    s = Runner(cfg).stats()
-    print(json.dumps(s, ensure_ascii=False, indent=2))
+    s = Runner(cfg).stats(days=args.days, by=args.by)
+    if args.json:
+        print(json.dumps(s, ensure_ascii=False, indent=2))
+        return
+    label = {"day": "date", "task": "task", "model": "model", "cwd": "project"}[args.by]
+    rows = list(s["groups"].items()) + [("TOTAL", s["total"])]
+    width = max(len(label), *(len(k) for k, _ in rows))
+    print(f"{label:{width}}  {'runs':>5} {'calls':>5} {'in tok':>10} {'out tok':>9} {'time':>8} {'load':>6}")
+    for key, g in rows:
+        if key == "TOTAL":
+            print("-" * (width + 50))
+        print(f"{key:{width}}  {g['runs']:>5} {g['calls']:>5} {g['prompt_tokens']:>10,} "
+              f"{g['completion_tokens']:>9,} {g['elapsed']:>7.0f}s {g['load_s']:>5.0f}s")
+    period = f"last {args.days} days" if args.days else "all time"
+    print(f"\nOffloaded from the cloud model ({period}): "
+          f"{s['total']['prompt_tokens'] + s['total']['completion_tokens']:,} tokens")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -111,7 +125,11 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--json", action="store_true", help="print the full result as JSON")
     s.set_defaults(fn=cmd_run)
 
-    sub.add_parser("stats", help="token usage totals from the log").set_defaults(fn=cmd_stats)
+    s = sub.add_parser("stats", help="offloaded token report from the run log")
+    s.add_argument("--days", type=int, help="only the last N days (default: all)")
+    s.add_argument("--by", choices=["day", "task", "model", "cwd"], default="day")
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(fn=cmd_stats)
     return p
 
 

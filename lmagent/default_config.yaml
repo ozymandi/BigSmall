@@ -3,6 +3,8 @@
 server:
   base_url: http://localhost:1234
   timeout: 900            # seconds per request
+  retries: 2              # retries on timeouts, connection errors, 5xx and unloaded-model errors
+  retry_delay: 2          # seconds, doubled on each retry
 
 models:
   code: qwen/qwen3.8-27b               # code, logic, structured extraction
@@ -11,7 +13,8 @@ models:
   embed: text-embedding-nomic-embed-text-v1.5
 
 load:
-  policy: prefer_loaded   # prefer_loaded: reuse whatever LLM is already in VRAM; strict: always load the role model
+  policy: smart           # prefer_loaded: reuse whatever LLM is in VRAM; smart: switch to the role model only for big inputs; strict: always load the role model
+  switch_min_tokens: 40000  # smart policy: switch models only when the input is at least this many tokens
   context_length: 32768
   ttl: 1800               # unload after N seconds idle
   parallel: 4
@@ -19,13 +22,16 @@ load:
 
 generation:
   temperature: 0.2
-  max_tokens: 8192
+  max_tokens: 8192        # cap on output per call
+  reserve_tokens: 2048    # minimum output room reserved per concurrent worker when planning chunks
   thinking: false         # disable chain-of-thought for Qwen-style models
 
 chunking:
   chunk_tokens: 10000
   overlap_tokens: 150
-  max_parallel: 4
+  token_safety: 1.5       # model tokenizers count more than tiktoken (measured: 1.45 on logs, 1.1 on code); context budget is divided by this
+  max_parallel: 4         # concurrent requests; the loaded context is shared between them, so the runner lowers this when chunks would not fit
+  min_chunk_tokens: 6000  # prefer fewer workers over chunks smaller than this
   max_file_bytes: 5000000
 
 output:

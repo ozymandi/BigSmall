@@ -7,8 +7,8 @@ gets back a compact result.
 ## What it does
 
 - Talks to LM Studio over its REST API (`localhost:1234`), loads and unloads models via the `lms` CLI.
-- Routes tasks to model roles (`code`, `text`, `bulk`) and by default reuses whatever model is already in
-  VRAM, because only one ~20 GB model fits at a time.
+- Routes tasks to model roles (`code`, `text`, `bulk`). Only one ~20 GB model fits in VRAM at a time, so
+  by default it reuses the loaded model and switches to the role model only for big inputs.
 - Splits big inputs into chunks that fit the loaded context, runs chunks in parallel, and merges partial
   results (map-reduce).
 - Ships task templates: `ask`, `summarize`, `translate`, `extract`, `classify`, `rewrite`, `explain_diff`,
@@ -63,11 +63,23 @@ Layers, later wins: `lmagent/default_config.yaml` < `~/.lmagent/config.yaml` < `
 | Key | Meaning |
 |---|---|
 | `models.code/text/bulk/embed` | model id per role |
-| `load.policy` | `prefer_loaded` reuses the model in VRAM, `strict` always loads the role model |
+| `load.policy` | `smart` (default) switches to the role model only for inputs of at least `load.switch_min_tokens`; `prefer_loaded` never switches; `strict` always loads the role model |
 | `load.context_length`, `load.ttl`, `load.parallel` | passed to `lms load` |
-| `generation.max_tokens`, `generation.thinking` | output budget, chain-of-thought on/off |
+| `server.retries`, `server.retry_delay` | retries on timeouts, connection errors, 5xx and unloaded-model errors (the model is reloaded automatically) |
+| `generation.max_tokens`, `generation.reserve_tokens` | output cap per call; output room reserved per worker when planning chunks |
+| `generation.thinking` | `false` sends `reasoning_effort: none`, which is what actually disables reasoning in LM Studio (Qwen and Nemotron verified) |
 | `chunking.chunk_tokens`, `chunking.max_parallel` | chunk size and concurrency |
+| `chunking.token_safety` | model tokenizers count ~1.1x (code) to ~1.5x (logs) more than tiktoken; the context budget is divided by this. If a chunk still overflows, it is split in half and retried |
 | `output.inline_limit` | chars returned inline before spilling to a file |
+
+## Offload report
+
+```bash
+lmagent stats                    # per day, all time
+lmagent stats --days 7 --by task # per task, last week; also --by model, --by cwd, --json
+```
+
+Shows runs, calls, input/output tokens handled locally, wall time and model load time.
 
 ## Layout
 

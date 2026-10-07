@@ -23,6 +23,7 @@ class TaskSpec:
     json_schema: dict | None = None
     defaults: dict = field(default_factory=dict)
     output_ext: str = "md"
+    output_ratio: float = 0.3     # expected output size relative to the input chunk; drives chunk planning
 
 
 BASE_SYSTEM = (
@@ -64,6 +65,7 @@ _register(TaskSpec(
          "Output: at most 20 bullet points of key facts (concrete names, numbers, errors, decisions), "
          "then a 2-3 sentence overall summary. Be dense, no filler.\n\n<content>\n{content}\n</content>",
     mode="map_reduce",
+    output_ratio=0.15,
     reduce="Focus: {focus}\n{instruction}\n\nPartial summaries:\n{content}\n\n"
            "Produce one consolidated summary: at most 25 bullet points of key facts, then a 2-3 sentence overview.",
     defaults={"focus": "everything important"},
@@ -79,6 +81,7 @@ _register(TaskSpec(
          "<content>\n{content}\n</content>",
     mode="per_chunk",
     defaults={"to": "Ukrainian"},
+    output_ratio=1.2,
 ))
 
 _register(TaskSpec(
@@ -101,6 +104,7 @@ _register(TaskSpec(
     user="Classify the content according to this rule: {instruction}\n\n<content>\n{content}\n</content>",
     mode="per_file",
     sub_mode="single",
+    output_ratio=0.05,
     json_schema={
         "type": "object",
         "properties": {
@@ -122,6 +126,7 @@ _register(TaskSpec(
     user="Apply this change to the content: {instruction}\n\n<content>\n{content}\n</content>",
     mode="per_file",
     output_ext="",
+    output_ratio=1.2,
 ))
 
 _register(TaskSpec(

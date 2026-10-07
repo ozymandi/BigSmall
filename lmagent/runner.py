@@ -10,7 +10,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from .chunker import count_tokens, read_inputs, split_text
-from .client import ChatResult, LMStudioClient
+from .client import ChatResult, LMStudioClient, LMStudioError
 from .tasks import MERGE_SYSTEM, TASKS, TaskSpec, get_task
 
 PROMPT_OVERHEAD = 600  # tokens reserved for system prompt + template text
@@ -33,6 +33,7 @@ class RunResult:
     completion_tokens: int = 0
     elapsed: float = 0.0
     calls: int = 0
+    load_seconds: float = 0.0
     notes: list[str] = field(default_factory=list)
 
     def stats_line(self) -> str:
@@ -60,37 +61,89 @@ class Runner:
     def __init__(self, cfg: dict, client: LMStudioClient | None = None):
         self.cfg = cfg
         self.cwd = Path(cfg["_cwd"])
-        self.client = client or LMStudioClient(cfg["server"]["base_url"], cfg["server"]["timeout"])
+        srv = cfg["server"]
+        self.client = client or LMStudioClient(srv["base_url"], srv["timeout"],
+                                               retries=srv.get("retries", 2),
+                                               retry_delay=srv.get("retry_delay", 2.0))
+        self.client.on_not_loaded = self._reload
         self._lock = threading.Lock()
+        self._load_seconds = 0.0
+        self._workers = int(cfg["chunking"]["max_parallel"])
+
+    def _reload(self, model: str) -> None:
+        """Re-load a model that LM Studio dropped (TTL expiry, manual unload) mid-run."""
+        ld = self.cfg["load"]
+        with self._lock:
+            if self.client.load(model, ld["context_length"], ld["ttl"], ld["parallel"], ld["unload_others"]):
+                self._load_seconds += self.client.last_load_seconds or 0.0
 
     # --- model handling --------------------------------------------------
     def resolve_model(self, spec: TaskSpec, override: str | None = None,
-                      strict: bool = False, notes: list[str] | None = None) -> str:
+                      strict: bool = False, notes: list[str] | None = None,
+                      input_tokens: int = 0) -> str:
+        """Pick a model. Policies: strict (always role model), prefer_loaded (never switch),
+        smart (switch to the role model only when the input is big enough to justify a reload)."""
+        notes = notes if notes is not None else []
+        ld = self.cfg["load"]
         role_model = self.cfg["models"][spec.role]
+        policy = "strict" if strict else ld.get("policy", "smart")
         if override:
             model = override
-        elif not strict and self.cfg["load"]["policy"] == "prefer_loaded":
-            loaded = self.client.loaded_llms()
-            if any(m["id"] == role_model for m in loaded):
-                model = role_model
-            elif loaded:
-                model = loaded[0]["id"]
-                if notes is not None:
-                    notes.append(f"using already loaded {model} instead of role model {role_model}")
-            else:
-                model = role_model
-        else:
+        elif policy == "strict":
             model = role_model
-        ld = self.cfg["load"]
+        else:
+            loaded = self.client.loaded_llms()
+            if not loaded or any(m["id"] == role_model for m in loaded):
+                model = role_model
+            else:
+                threshold = int(ld.get("switch_min_tokens", 40000))
+                if policy == "smart" and input_tokens >= threshold:
+                    model = role_model
+                    notes.append(f"switching to role model {role_model}: input {input_tokens} tok >= {threshold}")
+                else:
+                    model = loaded[0]["id"]
+                    notes.append(f"using already loaded {model} instead of role model {role_model}")
         if self.client.load(model, ld["context_length"], ld["ttl"], ld["parallel"], ld["unload_others"]):
-            if notes is not None:
-                notes.append(f"loaded {model}")
+            secs = self.client.last_load_seconds or 0.0
+            self._load_seconds += secs
+            notes.append(f"loaded {model} in {secs:.0f}s")
         return model
 
-    def _budget(self, model: str) -> int:
+    def _plan(self, model: str, spec: TaskSpec, notes: list[str]) -> int:
+        """Decide workers and chunk budget for this model and task.
+
+        Measured behaviour of LM Studio: the loaded context is one shared budget for all concurrent
+        sequences (prompt + generated tokens), max_tokens is only a cap. So per worker we need
+        chunk*safety + output + overhead <= ctx / workers, where output is the larger of
+        generation.reserve_tokens and chunk*safety*spec.output_ratio, and output must also fit max_tokens.
+        Returns the chunk budget in tiktoken tokens; sets self._workers.
+        """
+        ch = self.cfg["chunking"]
+        gen = self.cfg["generation"]
         ctx = self.client.loaded_context(model, self.cfg["load"]["context_length"])
-        return max(1000, min(self.cfg["chunking"]["chunk_tokens"],
-                             ctx - self.cfg["generation"]["max_tokens"] - PROMPT_OVERHEAD))
+        slots = self.client.loaded_parallel(model, self.cfg["load"]["parallel"])
+        safety = float(ch.get("token_safety", 1.5))
+        ratio = float(spec.output_ratio)
+        reserve = int(gen.get("reserve_tokens", 2048))
+        max_tokens = int(gen["max_tokens"])
+        min_chunk = int(ch.get("min_chunk_tokens", 6000))
+
+        def fits_for(workers: int) -> int:
+            room = ctx // workers - PROMPT_OVERHEAD
+            c = min((room - reserve) / safety, room / (safety * (1 + ratio)))
+            if ratio > 0:
+                c = min(c, max_tokens / (safety * ratio))
+            return int(c)
+
+        workers = max(1, min(int(ch["max_parallel"]), slots))
+        while workers > 1 and fits_for(workers) < min_chunk and fits_for(workers - 1) > fits_for(workers):
+            workers -= 1
+        fits = fits_for(workers)
+        self._workers = workers
+        budget = max(500, min(int(ch["chunk_tokens"]), fits))
+        if workers < slots or budget < int(ch["chunk_tokens"]):
+            notes.append(f"plan: ctx {ctx}, {workers} worker(s), chunk {budget} tok (output ratio {ratio})")
+        return budget
 
     # --- low level call --------------------------------------------------
     def _call(self, model: str, system: str, user: str, acc: dict,
@@ -116,7 +169,7 @@ class Runner:
         return template.format_map(d)
 
     def _pmap(self, fn, items: list) -> list:
-        n = max(1, min(self.cfg["chunking"]["max_parallel"], len(items)))
+        n = max(1, min(self._workers, len(items)))
         if n == 1:
             return [fn(x) for x in items]
         with ThreadPoolExecutor(max_workers=n) as ex:
@@ -128,8 +181,18 @@ class Runner:
         chunks = split_text(text, budget, self.cfg["chunking"]["overlap_tokens"])
 
         def run_chunk(chunk: str) -> str:
-            return self._call(model, spec.system, self._fill(spec.user, spec, instruction, chunk, params),
-                              acc, spec.json_schema)
+            try:
+                return self._call(model, spec.system, self._fill(spec.user, spec, instruction, chunk, params),
+                                  acc, spec.json_schema)
+            except LMStudioError as e:
+                if "context size" not in str(e).lower() or count_tokens(chunk) < 500:
+                    raise
+            # The model's tokenizer counted more than tiktoken did: split the chunk in half and retry.
+            half = max(250, count_tokens(chunk) // 2)
+            parts = split_text(chunk, half, 0)
+            with self._lock:
+                notes.append(f"context exceeded, re-split a chunk into {len(parts)} parts")
+            return "\n".join(run_chunk(p) for p in parts)
 
         if len(chunks) == 1 and mode != "per_chunk":
             return run_chunk(chunks[0])
@@ -186,8 +249,10 @@ class Runner:
         if not items and not instruction:
             raise ValueError("Nothing to do: give an instruction, files or text.")
 
-        model = self.resolve_model(spec, model, strict, notes)
-        budget = self._budget(model)
+        self._load_seconds = 0.0
+        input_tokens = sum(count_tokens(body) for _, body in items)
+        model = self.resolve_model(spec, model, strict, notes, input_tokens)
+        budget = self._plan(model, spec, notes)
         files_written: list[str] = []
         out_dir = self.cwd / self.cfg["output"]["dir"]
 
@@ -253,7 +318,7 @@ class Runner:
             task=task, model=model, text=result_text, output_path=output_path,
             files_written=files_written, prompt_tokens=acc["prompt_tokens"],
             completion_tokens=acc["completion_tokens"], elapsed=time.time() - t0,
-            calls=acc["calls"], notes=notes,
+            calls=acc["calls"], load_seconds=round(self._load_seconds, 1), notes=notes,
         )
         self._log(result, instruction)
         return result
@@ -271,7 +336,7 @@ class Runner:
                 "cwd": str(self.cwd), "task": r.task, "model": r.model,
                 "instruction": instruction[:200], "calls": r.calls,
                 "prompt_tokens": r.prompt_tokens, "completion_tokens": r.completion_tokens,
-                "elapsed": round(r.elapsed, 1), "output_path": r.output_path,
+                "elapsed": round(r.elapsed, 1), "load_s": r.load_seconds, "output_path": r.output_path,
                 "files_written": len(r.files_written),
             }
             with open(p, "a", encoding="utf-8") as f:
@@ -279,25 +344,36 @@ class Runner:
         except OSError:
             pass
 
-    def stats(self) -> dict:
+    def log_entries(self, days: int | None = None) -> list[dict]:
         p = self._log_path()
-        totals = {"runs": 0, "calls": 0, "prompt_tokens": 0, "completion_tokens": 0, "elapsed": 0.0,
-                  "by_task": {}, "by_model": {}}
         if not p.is_file():
-            return totals
+            return []
+        cutoff = None
+        if days:
+            cutoff = (_dt.datetime.now() - _dt.timedelta(days=days)).isoformat(timespec="seconds")
+        out = []
         for line in p.read_text(encoding="utf-8").splitlines():
             try:
                 e = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            totals["runs"] += 1
-            totals["calls"] += e.get("calls", 0)
-            totals["prompt_tokens"] += e.get("prompt_tokens", 0)
-            totals["completion_tokens"] += e.get("completion_tokens", 0)
-            totals["elapsed"] += e.get("elapsed", 0)
-            for key, bucket in (("task", "by_task"), ("model", "by_model")):
-                b = totals[bucket].setdefault(e.get(key, "?"), {"runs": 0, "prompt_tokens": 0, "completion_tokens": 0})
-                b["runs"] += 1
-                b["prompt_tokens"] += e.get("prompt_tokens", 0)
-                b["completion_tokens"] += e.get("completion_tokens", 0)
-        return totals
+            if cutoff and e.get("ts", "") < cutoff:
+                continue
+            out.append(e)
+        return out
+
+    def stats(self, days: int | None = None, by: str = "day") -> dict:
+        """Aggregate the run log. by: day | task | model | cwd."""
+        groups: dict[str, dict] = {}
+        total = {"runs": 0, "calls": 0, "prompt_tokens": 0, "completion_tokens": 0, "elapsed": 0.0, "load_s": 0.0}
+        for e in self.log_entries(days):
+            key = e.get("ts", "")[:10] if by == "day" else str(e.get(by, "?"))
+            g = groups.setdefault(key, {k: 0 for k in total})
+            for bucket in (g, total):
+                bucket["runs"] += 1
+                bucket["calls"] += e.get("calls", 0)
+                bucket["prompt_tokens"] += e.get("prompt_tokens", 0)
+                bucket["completion_tokens"] += e.get("completion_tokens", 0)
+                bucket["elapsed"] += e.get("elapsed", 0)
+                bucket["load_s"] += e.get("load_s", 0) or 0
+        return {"by": by, "days": days, "groups": dict(sorted(groups.items())), "total": total}

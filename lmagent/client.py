@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 import shutil
 import subprocess
@@ -11,6 +12,8 @@ import httpx
 
 THINK_RE = re.compile(r"<think>.*?</think>\s*", re.S)
 LLM_TYPES = ("llm", "vlm")
+RETRYABLE_STATUS = {408, 409, 425, 429, 500, 502, 503, 504}
+NOT_LOADED_MARKERS = ("not loaded", "no models loaded", "model_not_found", "model not found", "failed to load")
 
 
 class LMStudioError(RuntimeError):
@@ -40,10 +43,16 @@ def _lms_binary() -> str:
 class LMStudioClient:
     """Thin wrapper over the LM Studio REST API plus the lms CLI for load/unload."""
 
-    def __init__(self, base_url: str = "http://localhost:1234", timeout: float = 900):
+    def __init__(self, base_url: str = "http://localhost:1234", timeout: float = 900,
+                 retries: int = 2, retry_delay: float = 2.0):
         self.base_url = base_url.rstrip("/")
         self.http = httpx.Client(base_url=self.base_url, timeout=httpx.Timeout(timeout, connect=5))
+        self.retries = retries
+        self.retry_delay = retry_delay
         self._supports_template_kwargs = True
+        # Called with the model id when a request fails because the model is no longer loaded (e.g. TTL).
+        self.on_not_loaded = None
+        self.last_load_seconds: float | None = None
 
     # --- discovery -------------------------------------------------------
     def is_up(self) -> bool:
@@ -78,6 +87,18 @@ class LMStudioClient:
         info = self.model_info(model) or {}
         return int(info.get("loaded_context_length") or default)
 
+    def loaded_parallel(self, model: str, default: int) -> int:
+        """Number of parallel prediction slots the model was loaded with (from lms ps)."""
+        try:
+            proc = subprocess.run([_lms_binary(), "ps", "--json"], capture_output=True, text=True,
+                                  encoding="utf-8", errors="replace", timeout=30)
+            for m in json.loads(proc.stdout or "[]"):
+                if m.get("identifier") == model or m.get("modelKey") == model:
+                    return int(m.get("parallel") or default)
+        except (OSError, ValueError, subprocess.SubprocessError):
+            pass
+        return default
+
     # --- load / unload ---------------------------------------------------
     def load(self, model: str, context_length: int, ttl: int, parallel: int,
              unload_others: bool = True, wait: float = 180) -> bool:
@@ -93,18 +114,21 @@ class LMStudioClient:
                "--context-length", str(context_length),
                "--ttl", str(ttl),
                "--parallel", str(parallel)]
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=wait)
+        t0 = time.time()
+        proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=wait)
         if proc.returncode != 0:
             raise LMStudioError(f"lms load failed: {proc.stderr.strip() or proc.stdout.strip()}")
         deadline = time.time() + wait
         while time.time() < deadline:
             if self.is_loaded(model):
+                self.last_load_seconds = time.time() - t0
                 return True
             time.sleep(1)
         raise LMStudioError(f"Model '{model}' did not report loaded state within {wait}s.")
 
     def unload(self, model: str) -> None:
-        subprocess.run([_lms_binary(), "unload", model], capture_output=True, text=True, timeout=60)
+        subprocess.run([_lms_binary(), "unload", model], capture_output=True, text=True,
+                       encoding="utf-8", errors="replace", timeout=60)
 
     # --- inference -------------------------------------------------------
     def chat(self, model: str, messages: list[dict], temperature: float = 0.2,
@@ -123,19 +147,11 @@ class LMStudioClient:
                 "json_schema": {"name": "result", "strict": True, "schema": json_schema},
             }
         if not thinking and self._supports_template_kwargs:
-            body["chat_template_kwargs"] = {"enable_thinking": False}
+            # Measured on LM Studio: chat_template_kwargs/enable_thinking is ignored, reasoning_effort works.
+            body["reasoning_effort"] = "none"
 
         t0 = time.time()
-        try:
-            r = self.http.post("/v1/chat/completions", json=body)
-        except httpx.HTTPError as e:
-            raise LMStudioError(f"request failed: {e}") from e
-        if r.status_code == 400 and "chat_template_kwargs" in body and "chat_template_kwargs" in r.text:
-            self._supports_template_kwargs = False
-            body.pop("chat_template_kwargs")
-            r = self.http.post("/v1/chat/completions", json=body)
-        if r.status_code >= 400:
-            raise LMStudioError(f"HTTP {r.status_code}: {r.text[:800]}")
+        r = self._post_with_retry(body, model)
         data = r.json()
         msg = data["choices"][0]["message"]
         content = THINK_RE.sub("", msg.get("content") or "").strip()
@@ -148,6 +164,37 @@ class LMStudioClient:
             elapsed=time.time() - t0,
             raw=data,
         )
+
+    def _post_with_retry(self, body: dict, model: str) -> httpx.Response:
+        attempt = 0
+        delay = self.retry_delay
+        while True:
+            try:
+                r = self.http.post("/v1/chat/completions", json=body)
+            except httpx.HTTPError as e:
+                if attempt >= self.retries:
+                    raise LMStudioError(f"request failed after {attempt + 1} attempt(s): {e}") from e
+                attempt += 1
+                time.sleep(delay)
+                delay *= 2
+                continue
+            if r.status_code < 400:
+                return r
+            text_l = r.text.lower()
+            if r.status_code == 400 and "reasoning_effort" in body and "reasoning_effort" in text_l:
+                self._supports_template_kwargs = False
+                body.pop("reasoning_effort")
+                continue
+            if attempt >= self.retries:
+                raise LMStudioError(f"HTTP {r.status_code}: {r.text[:800]}")
+            if any(m in text_l for m in NOT_LOADED_MARKERS) and self.on_not_loaded is not None:
+                self.on_not_loaded(model)
+            elif r.status_code not in RETRYABLE_STATUS:
+                raise LMStudioError(f"HTTP {r.status_code}: {r.text[:800]}")
+            else:
+                time.sleep(delay)
+                delay *= 2
+            attempt += 1
 
     def embed(self, model: str, texts: list[str]) -> list[list[float]]:
         r = self.http.post("/v1/embeddings", json={"model": model, "input": texts})

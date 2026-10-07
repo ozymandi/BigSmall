@@ -30,10 +30,23 @@ Repo: https://github.com/ozymandi/BigSmall
 - `mcp_server.py` with lm_delegate, lm_summarize_files, lm_batch, lm_models, lm_tasks.
 - Registered in Claude Code user scope.
 
-### Phase 3: hardening. Not started
-- Token-saving report (`lmagent stats` exists, needs a per-day view).
-- Retry on transient LM Studio errors, better handling when the server is busy.
-- Smarter model switching (estimate load time vs. task size).
+### Phase 3: hardening. Done 2026-10-07
+- Retries in the client: timeouts, connection errors, 5xx, and "model not loaded" (auto reload after TTL).
+- `load.policy: smart` (new default): switch to the role model only when the input is at least
+  `switch_min_tokens` (40k). Load time is measured and logged.
+- `lmagent stats --days N --by day|task|model|cwd` report.
+- Chunk planner rewritten from measurements:
+  - model tokenizers count 1.1x (code) to 1.45x (logs) more than tiktoken -> `chunking.token_safety: 1.5`;
+  - LM Studio's loaded context is one shared budget for all concurrent sequences (prompt + generated),
+    max_tokens is only a cap -> workers and chunk size are derived from ctx, slots and the task's
+    `output_ratio` (translate/rewrite 1.2, summarize 0.15, classify 0.05, default 0.3);
+  - if a chunk still overflows, it is split in half and retried.
+- `lms` subprocess output decoded as UTF-8 (progress bars crashed cp1252 decoding on Windows).
+- Reasoning off: LM Studio ignores `chat_template_kwargs.enable_thinking`; top-level
+  `reasoning_effort: "none"` works for both Qwen and Nemotron (measured: 34 -> 2 completion tokens).
+  Without it Nemotron spent 20+ minutes reasoning over a 168k-token log.
+- Verified: 45k-token log -> automatic switch Qwen -> Nemotron (22 s load), 2 workers, 5 chunks + reduce,
+  42 s total, 68k tokens handled locally.
 
 ### Phase 4, optional
 - Embedding-based file search (`embed` role is configured, `client.embed` exists).
