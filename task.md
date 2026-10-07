@@ -146,9 +146,31 @@ Decided 2026-10-07: `load.context_length` default raised to 89344 (designer).
   (RETRYABLE_STATUS set, NOT_LOADED_MARKERS, retries 2 / delay 2 s doubled, `on_not_loaded -> Runner._reload`)
   checked against `client.py`, `runner.py`, `default_config.yaml`; line citations within a few lines of the real ones.
 
+### Phase 12: local model drives an MCP server (Worksection intake, step 1). Done 2026-10-07
+Goal (designer): on the command "читай агентом <link>" the local model, not Claude, reads a Worksection
+project (tasks, comments, PDF/docx attachments) and writes a digest; Claude only reads the digest and does
+the analysis and estimate. Local model = electricity, Claude = tokens. Delegation only on explicit command.
+
+Findings, all measured on LM Studio 0.4.25:
+- `POST /api/v1/chat` with `integrations` lets the model call MCP tools itself; tool outputs stay in the
+  response (`tool_call` blocks), only the final `message` needs to reach Claude.
+- `ephemeral_mcp` refuses non-public addresses, so a local server must be listed in `~/.lmstudio/mcp.json`
+  and referenced as `{type: plugin, id: "mcp/<label>"}`.
+- mcp.json access through the API requires Server Settings: Require Authentication ON (with an API token),
+  "Allow calling servers from mcp.json" ON. Turning authentication off resets the mcp.json switch.
+  Hence `server.api_key` / `LMSTUDIO_API_KEY` and the Bearer header in the client (commit 1879157).
+- `reasoning: "off"` is the accepted value on this endpoint (not `none`).
+- Worksection MCP (pbv7/worksection-mcp 0.6.2) runs from `D:\work_cont\estim_2026\worksection\worksection-mcp`
+  (`uv run python -m worksection_mcp`, port 8000). `get_file_content` extracts text from pdf/docx/xlsx/pptx.
+- Probe: Qwen called `get_current_user` through `mcp/worksection`, 490 tokens in, 24 out, no confirmation
+  dialog, name returned correctly.
+
 ## Next step
 
-Roadmap fully done and verified in a fresh session. Nothing scheduled.
+Awaiting "го" for the intake flow: `/api/v1/chat` client method with integrations + allowed_tools, `intake`
+task (fixed step order, step cap, digest template, two passes for big projects, result in `intake/digest.md`),
+CLI `lmagent intake <link>` + MCP `lm_intake` + codeword in the global CLAUDE.md, trial on one real project.
+Estimate 4-5 h.
 
 ## Open questions
 
