@@ -8,7 +8,7 @@ server:
 
 models:
   code: qwen/qwen3.8-27b               # code, logic, structured extraction
-  text: google/gemma-4-31b             # prose, translation
+  text: qwen/qwen3.8-27b               # prose, translation; Gemma 4 31B translated slightly better but 3x slower plus a model switch (measured 2026-10-07)
   bulk: qwen/qwen3.8-27b               # mass processing; Nemotron (26 GB, 32k ctx) did not pay off on a 32 GB GPU
   embed: text-embedding-nomic-embed-text-v1.5
 

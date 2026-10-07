@@ -113,9 +113,25 @@ Bugs and tuning found:
   output ratios, worker reduction), incremental index (unchanged/changed/deleted/excluded, kind filter),
   output cleaning, config layering, rewrite guardrails end to end. `pip install -e .[dev]`, `python -m pytest`.
 
+### Phase 9: `text` role model (roadmap item 6). Done 2026-10-07
+Same inputs for both models: translate README excerpt (870 tok) to Ukrainian, summarize task.md (2.4k tok).
+
+| Job | Qwen 3.8 27B | Gemma 4 31B |
+|---|---|---|
+| translate | 12.4 s | 37.2 s (+13 s model switch) |
+| summarize | 10.3 s | 13.2 s |
+| translation quality | usable; 2-3 slips (one verb form, "embedded" rendered as "інтегруються") | slightly more natural, correct terms |
+| summary quality | equal (more detail per phase) | equal (more compact) |
+
+Decision (roadmap rule "if the difference is small, set text to Qwen"): `models.text` = Qwen. No model switch
+happens any more in the default setup; Gemma stays downloaded and can be forced with `-m google/gemma-4-31b`
+or `model=` in `lm_delegate` when translation quality matters more than speed.
+
 ## Next step
 
-Roadmap item 6: compare Gemma vs Qwen for the `text` role.
+Roadmap items 1-6 are done. Left unscheduled (see `ROADMAP.md`, "Later"): progress notifications for long
+MCP runs, a friendly error when LM Studio is down, per-project `lmagent.yaml` examples. The MCP server
+process in Claude Code has to be restarted (new session) to pick up `lm_search(kind=, ask=)`.
 
 ## Open questions
 

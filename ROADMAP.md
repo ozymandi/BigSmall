@@ -48,10 +48,10 @@ In a fresh Claude Code session on another project:
 - [x] Fixes from the trial: keep the source line endings (LF was becoming CRLF), strip an echoed
       `<content>` wrapper, report unchanged files, summarize reduce prompt merges duplicates.
 
-## 6. Decide the `text` role model (0.5-1 h)
+## 6. Decide the `text` role model (0.5-1 h). Done 2026-10-07: `text` = Qwen
 
-- [ ] Run `translate` and `summarize` on the same inputs with Gemma 4 31B and Qwen, compare quality and time.
-- [ ] If the difference is small, set `text` to Qwen too: then no model switching happens at all.
+- [x] Run `translate` and `summarize` on the same inputs with Gemma 4 31B and Qwen, compare quality and time.
+- [x] If the difference is small, set `text` to Qwen too: then no model switching happens at all.
 
 ## Later, not scheduled
 
