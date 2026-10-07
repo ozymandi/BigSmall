@@ -62,13 +62,41 @@ Repo: https://github.com/ozymandi/BigSmall
     (keys `model`, `context_length`, `ttl_seconds`, `parallel`), discovery via `GET /api/v1/models`.
 - Verified through MCP stdio: lm_search 3.4 s with embed-model load, lm_delegate 3.4 s.
 
+### Phase 5: live trial on PlasticityMCP (411 ts files). Done 2026-10-07
+Run from the lmagent session itself with `cwd=E:\Projects\PlasticityMCP` (MCP in user scope, so no new
+session was needed). Trial files were reverted with `git checkout` afterwards.
+
+| Job | Input | Time | Usable as-is | Notes |
+|---|---|---|---|---|
+| `lm_models`, `lm_tasks` | - | <1 s | yes | Qwen loaded, ctx 89k; roles code/bulk=Qwen, text=Gemma |
+| `lm_search` "where is the websocket connection opened" | index 558 files / 16,299 chunks, 68 MB | first build ~1 min | partly | all 6 hits were markdown (docs/, README, task.md); the real code (`client.ts`, `cdp.ts`, `tools/bridge.ts`) did not appear |
+| `lm_search` "zod schema validating fillet radius" | - | 2 s | partly | `solids.ts` only at #4 and with the handler's line range, not `FilletArgs` |
+| `summarize` task.md | 43.9k tok in, 5.0k out | 42.7 s, 5 calls, 4 chunks | yes | accurate; reduce step repeated 2 bullets (Status, Tool count) at the end |
+| `extract` tools from curves.ts + solids.ts | 13.7k in, 3.3k out | 25.9 s, 3 calls | yes | 28/28 names correct, required params correct on spot check |
+| `rewrite` JSDoc on 3 files -> `.lmagent/out/` | 2.5k in, 2.3k out | 11.6 s | no | comments good, but see bugs below |
+| `rewrite` same, `in_place` | 2.5k in | 11 s | no | same bugs; reverted |
+| `local-worker` subagent (Haiku): locate `native_launch`, explain the debug-port trick | 6 tool calls, 21.5k subagent tokens | 57 s | yes | correct file, functions and mechanism; line numbers off by 3-8 (e.g. `unlockMainProcess` cited 142-196, real 139-196); it skipped the required closing line "model used and offloaded tokens" |
+
+Offloaded in the trial: about 77k input tokens (plus the embedding index). `lmagent stats` for the day: 165k.
+
+Bugs and tuning found:
+- `rewrite`: `Path.write_text` translates LF to CRLF on Windows, so every line of every file changed
+  (`git diff` hid it because of `core.autocrlf=input`, the files on disk still changed). Must preserve the
+  original line endings (`newline=""` plus detecting the source EOL).
+- `rewrite`: one output came back wrapped in `<content>...</content>` (the template's own tag echoed);
+  `strip_fences` does not remove it. Nondeterministic: the in-place run of the same job was clean.
+- `rewrite`: the model ignored "exported only" and commented module-level consts in `smoke.ts`.
+- `summarize` reduce prompt needs an explicit "merge duplicates, no repeated bullets".
+- `lm_search`: prose files outrank code for "where is X" questions. Candidates: a `kind=code|docs|all` filter
+  (by extension), an exclude list in `lmagent.yaml` (here `plasticity-fork/` is vendored and triples the
+  index), maybe bigger chunks for code.
+- Item 5 of the roadmap (guardrails) is confirmed necessary before `in_place` is used for real.
+
 ## Next step
 
-See `ROADMAP.md`. Start with item 1 (live trial in a fresh Claude Code session on another project) and
-item 2 (usage rule in the global CLAUDE.md). Items 3-6 are decided after the trial.
-
-Decided 2026-10-07: `bulk` role set to Qwen (designer's decision). Nemotron stays downloaded but unused
-by default; summarize/classify no longer trigger a model switch.
+Roadmap items 1 and 2 done (trial, usage rule in the global `~/.claude/CLAUDE.md`). Proposed order for the
+rest, based on the trial: 5 (guardrails + the EOL and `<content>` fixes) -> 4 (answer on top of search) and
+the search tuning above -> 3 (tests) -> 6 (text role model).
 
 ## Open questions
 

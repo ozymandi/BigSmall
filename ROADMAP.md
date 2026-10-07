@@ -3,23 +3,23 @@
 Status of phases 1-4: done, see `task.md`. Items below are the next candidates, in the recommended
 order. Estimates are in hours. Tick an item when it is done and note the date.
 
-## 1. Live trial on a real project (1-2 h)
+## 1. Live trial on a real project (1-2 h). Done 2026-10-07, findings in `task.md` (Phase 5)
 
 In a fresh Claude Code session on another project:
 
-- [ ] `lm_models` and `lm_tasks` respond (MCP server `lmagent` connected, user scope).
-- [ ] `lm_search` on a question like "where is X handled", check that hits point to the right files.
-- [ ] `lm_delegate` with `task=summarize` on a big log or directory.
-- [ ] `lm_delegate` with `task=extract` returning JSON.
-- [ ] `lm_delegate` with `task=rewrite` on 2-3 files, first to `.lmagent/out/`, then `in_place`.
-- [ ] Same jobs through the `local-worker` subagent (`Agent` tool, `subagent_type: local-worker`), with the
+- [x] `lm_models` and `lm_tasks` respond (MCP server `lmagent` connected, user scope).
+- [x] `lm_search` on a question like "where is X handled", check that hits point to the right files.
+- [x] `lm_delegate` with `task=summarize` on a big log or directory.
+- [x] `lm_delegate` with `task=extract` returning JSON.
+- [x] `lm_delegate` with `task=rewrite` on 2-3 files, first to `.lmagent/out/`, then `in_place`.
+- [x] Same jobs through the `local-worker` subagent (`Agent` tool, `subagent_type: local-worker`), with the
       project directory named in the prompt so it can pass `cwd`.
-- [ ] Record for each: was the result usable as-is, how many tokens stayed local (`offloaded_tokens`),
+- [x] Record for each: was the result usable as-is, how many tokens stayed local (`offloaded_tokens`),
       which prompts need tuning. Write findings into `task.md`.
 
-## 2. Usage rule for Claude (0.5 h)
+## 2. Usage rule for Claude (0.5 h). Done 2026-10-07
 
-- [ ] Add a short rule to the global `~/.claude/CLAUDE.md`: when to delegate (files or logs over ~5k tokens,
+- [x] Add a short rule to the global `~/.claude/CLAUDE.md`: when to delegate (files or logs over ~5k tokens,
       many files, mechanical bulk edits, translation, "where is X" questions) and when not to (small reads,
       anything needing judgement on the final code). Without it Claude will not pick the tools on its own.
 - [ ] Optionally the same rule as a project `CLAUDE.md` snippet for repos where it matters most.
