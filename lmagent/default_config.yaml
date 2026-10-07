@@ -44,6 +44,19 @@ index:
                           # file-name globs; "dir/" skips that directory anywhere (vendored forks), "vendor/*" a path
   answer_k: 12            # hits handed to the model for `search --ask` / lm_search(ask=...), capped by the context budget
 
+intake:
+  mcp: worksection        # label of the server in ~/.lmstudio/mcp.json that the local model drives itself
+  role: text              # model role used for the digest
+  lang: Ukrainian         # digest language
+  out: intake/digest.md   # relative to the working directory
+  raw_dir: intake/raw     # every tool output the model fetched, as JSON, for later lm_delegate jobs
+  max_tool_calls: 40      # soft cap passed to the model; LM Studio has no server-side limit
+  max_tasks: 20           # project link: tasks are digested one by one, then merged
+  max_output_tokens: 6000
+  allowed_tools: [get_project, get_tasks, get_task, get_task_subtasks, get_task_discussion, get_comments,
+                  get_all_task_attachments, get_task_files, get_project_files, get_file_content,
+                  get_offloaded_response_info, read_offloaded_response_text]
+
 output:
   dir: .lmagent/out       # relative to the working directory
   backup_dir: .lmagent/backup  # rewrite --in-place keeps the originals here, one folder per run

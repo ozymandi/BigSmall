@@ -165,13 +165,30 @@ Findings, all measured on LM Studio 0.4.25:
 - Probe: Qwen called `get_current_user` through `mcp/worksection`, 490 tokens in, 24 out, no confirmation
   dialog, name returned correctly.
 
+### Phase 13: Worksection intake. Done 2026-10-07
+- `LMStudioClient.chat_agent`: `POST /api/v1/chat` with `integrations`; `AgentResult` keeps every message
+  block, the tool calls (with outputs) and invalid calls; `text` is the last message.
+- `lmagent/intake.py`: `parse_link` (project / task / subtask / #com anchor), `Intake.run`: task link ->
+  one agent run (get_task, get_task_discussion, get_all_task_attachments, get_file_content per document,
+  read_offloaded_response_text, get_task_subtasks) -> digest with 9 fixed sections; project link ->
+  overview run, then one run per task (cap `intake.max_tasks`), then a merge call through `chat`.
+  `final_digest` drops the model's narration before the first heading. Outputs: `intake/digest.md`,
+  `intake/raw/NN_<tool>.json` (every tool output, for later lm_delegate jobs), `intake/run.json`
+  (call log without outputs). Logged to log.jsonl as task `intake`.
+- Config `intake:` (mcp label, role, lang, paths, max_tool_calls, max_tasks, allowed_tools whitelist).
+- CLI `lmagent intake <link> [--lang] [-o] [--json]`, MCP `lm_intake(link, cwd, lang, output_file)`,
+  codeword «читай агентом <лінк>» in the global CLAUDE.md, section 12 in examples/usage.md. 54 tests.
+- Trial on the real task 348940/22729222 (The Performance Method landing, 123 comments, 40 attachments):
+  15 tool calls incl. 8 `get_file_content` (pdf + html) and 3 offloaded-discussion chunk reads, 86 s,
+  digest 11k chars with sources per fact. Accurate on spot checks (milestones, dates, colour decision,
+  open items). Defect fixed after the trial: narration between tool calls leaked into the digest.
+  LM Studio `stats.input_tokens` (2.5k) counts only the last generation round, not the tool outputs,
+  so `lmagent stats` undercounts intake input.
+- Prerequisites recorded in usage.md: Worksection MCP running, listed in ~/.lmstudio/mcp.json,
+  Require Authentication + token, "Allow calling servers from mcp.json".
+
 ## Next step
 
-Awaiting "го" for the intake flow: `/api/v1/chat` client method with integrations + allowed_tools, `intake`
-task (fixed step order, step cap, digest template, two passes for big projects, result in `intake/digest.md`),
-CLI `lmagent intake <link>` + MCP `lm_intake` + codeword in the global CLAUDE.md, trial on one real project.
-Estimate 4-5 h.
-
-## Open questions
-
-- None at the moment.
+Intake works end to end; the MCP server needs a new Claude Code session to expose `lm_intake`.
+Open items for later, not scheduled: project-level flow not yet tried live; `get_task_subtasks` returned
+the parent task (server quirk, harmless); scans without a text layer are not read (no OCR).

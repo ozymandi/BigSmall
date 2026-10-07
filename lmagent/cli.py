@@ -131,6 +131,21 @@ def cmd_search(args, cfg):
             print()
 
 
+def cmd_intake(args, cfg):
+    from .intake import Intake
+    cb = (lambda d, t, m: print(f"[{d}/{t}] {m}", file=sys.stderr)) if sys.stderr.isatty() else None
+    res = Intake(cfg).run(args.link, lang=args.lang, out=args.output, on_progress=cb)
+    if args.json:
+        print(json.dumps(res.to_dict(), ensure_ascii=False, indent=1))
+        return 0
+    print(res.digest)
+    print(f"\n[intake | {res.model} | {len(res.tool_calls)} tool calls | in {res.prompt_tokens} / "
+          f"out {res.completion_tokens} tok | {res.elapsed:.0f}s] -> {res.digest_path}", file=sys.stderr)
+    for n in res.notes:
+        print("note:", n, file=sys.stderr)
+    return 0
+
+
 def cmd_stats(args, cfg):
     s = Runner(cfg).stats(days=args.days, by=args.by)
     if args.json:
@@ -201,6 +216,14 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--root", help="index root (default: current directory)")
     s.add_argument("--json", action="store_true")
     s.set_defaults(fn=cmd_search)
+
+    s = sub.add_parser("intake", help="Worksection project/task -> digest, read by the local model through "
+                                      "the Worksection MCP server (LM Studio agent loop)")
+    s.add_argument("link", help="https://<acct>.worksection.com/project/<pid>/[<task_id>/]")
+    s.add_argument("--lang", help="digest language (default: intake.lang)")
+    s.add_argument("-o", "--output", help="digest path (default: intake.out = intake/digest.md)")
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(fn=cmd_intake)
 
     s = sub.add_parser("stats", help="offloaded token report from the run log")
     s.add_argument("--days", type=int, help="only the last N days (default: all)")

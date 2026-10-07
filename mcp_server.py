@@ -18,6 +18,7 @@ from lmagent.config import load_config
 # Import at startup on purpose: importing numpy lazily inside a tool call (event-loop thread) deadlocks
 # on Windows while loading its C extension.
 from lmagent.index import Index
+from lmagent.intake import Intake
 from lmagent.answer import answer
 from lmagent.runner import Runner
 from lmagent.tasks import TASKS
@@ -112,6 +113,34 @@ async def lm_summarize_files(files: list[str], ctx: Context, focus: str = "every
     Cheap way to learn what is in big inputs without reading them yourself."""
     return await _run_async(ctx, "summarize", cwd or None, instruction=instruction, files=files,
                             params={"focus": focus})
+
+
+@mcp.tool()
+async def lm_intake(link: str, ctx: Context, cwd: str = "", lang: str = "",
+                    output_file: str = "") -> dict[str, Any]:
+    """Project intake on the designer's command ("читай агентом <link>"): the local model reads a
+    Worksection project or task itself through the Worksection MCP server (tasks, comments, PDF/docx
+    attachments) and writes a digest. Only the digest comes back; raw tool outputs are saved under
+    intake/raw/ for later lm_delegate jobs. Do not read the raw files yourself.
+
+    Args:
+        link: https://<acct>.worksection.com/project/<pid>/[<task_id>/] (a #com... anchor is fine).
+        cwd: the new project folder, absolute. The digest goes to <cwd>/intake/digest.md.
+        lang: digest language (default: intake.lang in the config, Ukrainian).
+        output_file: digest path relative to cwd (default intake/digest.md).
+    """
+    def job(on_progress):
+        cfg = load_config(cwd=cwd or os.environ.get("LMAGENT_CWD") or os.getcwd())
+        res = Intake(cfg).run(link, lang=lang or None, out=output_file or None, on_progress=on_progress)
+        d = res.to_dict()
+        d["digest"] = res.digest
+        return d
+
+    sink = _progress_sink(ctx, asyncio.get_running_loop())
+    try:
+        return await asyncio.to_thread(job, sink)
+    except (LMStudioError, ValueError, OSError) as e:
+        return {"error": str(e)}
 
 
 @mcp.tool()

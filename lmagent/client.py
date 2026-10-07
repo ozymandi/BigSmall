@@ -27,6 +27,19 @@ START_HINT = ("LM Studio server is not reachable at {url}. Start it: open LM Stu
 
 
 @dataclass
+class AgentResult:
+    text: str
+    model: str
+    tool_calls: list[dict] = field(default_factory=list)
+    invalid: list[dict] = field(default_factory=list)
+    messages: list[str] = field(default_factory=list)   # every message block; text is the last one
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    elapsed: float = 0.0
+    raw: dict | None = None
+
+
+@dataclass
 class ChatResult:
     content: str
     model: str
@@ -206,12 +219,63 @@ class LMStudioClient:
             raw=data,
         )
 
-    def _post_with_retry(self, body: dict, model: str) -> httpx.Response:
+    def chat_agent(self, model: str, input: str, integrations: list[dict], system_prompt: str = "",
+                   reasoning: str = "off", temperature: float = 0.2, max_output_tokens: int = 8192,
+                   context_length: int | None = None) -> "AgentResult":
+        """LM Studio's own agent loop (POST /api/v1/chat): the model calls MCP tools from
+        ~/.lmstudio/mcp.json itself; tool outputs come back as `tool_call` blocks, the answer as `message`.
+        Needs Server Settings: Require Authentication + API token, "Allow calling servers from mcp.json"."""
+        body: dict = {
+            "model": model,
+            "input": input,
+            "integrations": integrations,
+            "reasoning": reasoning,
+            "temperature": temperature,
+            "max_output_tokens": max_output_tokens,
+            "stream": False,
+        }
+        if system_prompt:
+            body["system_prompt"] = system_prompt
+        if context_length:
+            body["context_length"] = context_length
+        t0 = time.time()
+        try:
+            r = self._post_with_retry(body, model, path="/api/v1/chat")
+        except LMStudioError as e:
+            msg = str(e)
+            if "Permission denied to use plugin" in msg or "API token is required" in msg:
+                msg += ("\nLM Studio > Developer > Server Settings: Require Authentication ON with a token "
+                        "(server.api_key / LMSTUDIO_API_KEY) and 'Allow calling servers from mcp.json' ON.")
+            raise LMStudioError(msg) from e
+        data = r.json()
+        text_parts, calls, invalid = [], [], []
+        for block in data.get("output", []):
+            t = block.get("type")
+            if t == "message":
+                text_parts.append(block.get("content") or "")
+            elif t == "tool_call":
+                calls.append({"tool": block.get("tool"), "arguments": block.get("arguments"),
+                              "output": block.get("output")})
+            elif t == "invalid_tool_call":
+                invalid.append({"reason": block.get("reason"), "metadata": block.get("metadata")})
+        stats = data.get("stats") or {}
+        messages = [THINK_RE.sub("", t).strip() for t in text_parts]
+        messages = [m for m in messages if m]
+        return AgentResult(
+            text=messages[-1] if messages else "",
+            model=data.get("model_instance_id", model),
+            tool_calls=calls, invalid=invalid, messages=messages,
+            prompt_tokens=int(stats.get("input_tokens", 0)),
+            completion_tokens=int(stats.get("total_output_tokens", 0)),
+            elapsed=time.time() - t0, raw=data,
+        )
+
+    def _post_with_retry(self, body: dict, model: str, path: str = "/v1/chat/completions") -> httpx.Response:
         attempt = 0
         delay = self.retry_delay
         while True:
             try:
-                r = self.http.post("/v1/chat/completions", json=body)
+                r = self.http.post(path, json=body)
             except CONNECT_ERRORS as e:
                 raise self._down(e) from e
             except httpx.HTTPError as e:

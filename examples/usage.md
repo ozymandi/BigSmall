@@ -127,7 +127,26 @@ The subagent (`~/.claude/agents/local-worker.md`, Haiku) only has the `lm_*` too
 files itself, and returns a report under 300 words. Always name the project directory in the prompt so it
 can pass `cwd`. Line numbers in its citations were off by a few lines in the trial: verify before quoting.
 
-## 12. How much stayed local?
+## 12. Project intake from Worksection (the local model drives an MCP server)
+
+```bash
+lmagent intake https://<acct>.worksection.com/project/348940/22729222/      # one task
+lmagent intake https://<acct>.worksection.com/project/348940/               # whole project, task by task + merge
+```
+
+MCP: say *"читай агентом <link>"* -> `lm_intake(link, cwd=<project folder>)`. LM Studio runs its own agent
+loop (`POST /api/v1/chat` with `integrations`): the local model calls the Worksection MCP tools itself
+(task, discussion, attachments, `get_file_content` for pdf/docx/xlsx/pptx) and writes `intake/digest.md`
+with fixed sections (client, scope, deliverables, deadlines, constraints, attachments, discussion, open
+questions, facts for the estimate). Every tool output is kept in `intake/raw/NN_<tool>.json`, the call log
+in `intake/run.json`. Claude reads only the digest.
+
+Requirements: the Worksection MCP server running (`uv run python -m worksection_mcp`, port 8000), listed in
+`~/.lmstudio/mcp.json` under the label from `intake.mcp`; LM Studio Server Settings: Require Authentication
+ON with an API token in `server.api_key` (or `LMSTUDIO_API_KEY`) and "Allow calling servers from mcp.json"
+ON. `ephemeral_mcp` does not work for local addresses. Tool whitelist: `intake.allowed_tools`.
+
+## 13. How much stayed local?
 
 ```bash
 lmagent stats --days 7 --by task
