@@ -48,14 +48,26 @@ Repo: https://github.com/ozymandi/BigSmall
 - Verified: 45k-token log -> automatic switch Qwen -> Nemotron (22 s load), 2 workers, 5 chunks + reduce,
   42 s total, 68k tokens handled locally.
 
-### Phase 4, optional
-- Embedding-based file search (`embed` role is configured, `client.embed` exists).
-- A `local-worker` subagent definition for Claude Code.
+### Phase 4: search + subagent. Done 2026-10-07
+- `lmagent/index.py`: incremental embedding index in `.lmagent/index/` (nomic, 400-token chunks with
+  line ranges, only changed files re-embedded, deleted files dropped). 22 files / 64 chunks in 4 s.
+- CLI `lmagent index`, `lmagent search QUERY -k N [--files]`; MCP `lm_index`, `lm_search` (refreshes
+  the index before each query).
+- Subagent `~/.claude/agents/local-worker.md` (Haiku, only lm_* tools + Glob). Not yet exercised from a
+  live session: agents are loaded at session start, so it needs a new Claude Code session.
+- Two bugs found while testing through MCP:
+  - importing numpy lazily inside a tool call deadlocked the server (C extension load in the event-loop
+    thread on Windows); the index module is now imported at server startup;
+  - the `lms` CLI is gone: all load/unload goes through `POST /api/v1/models/load|unload`
+    (keys `model`, `context_length`, `ttl_seconds`, `parallel`), discovery via `GET /api/v1/models`.
+- Verified through MCP stdio: lm_search 3.4 s with embed-model load, lm_delegate 3.4 s.
 
 ## Next step
 
-Use the MCP tools from a real Claude Code session on another project and collect feedback on
-which tasks are worth delegating and where the prompts need tuning.
+1. New Claude Code session on another project: try `lm_search` + `lm_delegate` directly and through the
+   `local-worker` subagent; collect which tasks are worth delegating and where prompts need tuning.
+2. Decide on the `bulk` role model (Nemotron takes 26 GB and 32k context; a 8-14B model or Qwen itself
+   may serve better on this GPU).
 
 ## Open questions
 

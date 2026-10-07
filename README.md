@@ -6,7 +6,7 @@ gets back a compact result.
 
 ## What it does
 
-- Talks to LM Studio over its REST API (`localhost:1234`), loads and unloads models via the `lms` CLI.
+- Talks to LM Studio over its REST API (`localhost:1234`), including model load/unload (`/api/v1/models`).
 - Routes tasks to model roles (`code`, `text`, `bulk`). Only one ~20 GB model fits in VRAM at a time, so
   by default it reuses the loaded model and switches to the role model only for big inputs.
 - Splits big inputs into chunks that fit the loaded context, runs chunks in parallel, and merges partial
@@ -22,7 +22,8 @@ gets back a compact result.
 pip install -e .
 ```
 
-Requires LM Studio with the local server running and `lms` on PATH (`lms bootstrap`).
+Requires LM Studio with the local server running on `localhost:1234`. Everything, including model
+load/unload, goes through its REST API; the `lms` CLI is not used.
 
 ## CLI
 
@@ -43,6 +44,18 @@ lmagent stats                       # offloaded token totals
 Flags: `-m MODEL` forces a model, `--strict` forces the role model even if another one is loaded,
 `-p key=value` fills template params, `-o FILE` writes the result, `--json` prints the full result object.
 
+## Semantic search
+
+```bash
+lmagent index                         # build/update .lmagent/index/ for the current directory
+lmagent search "where are retries handled" -k 5
+lmagent search "database config" --files
+```
+
+Chunks of ~400 tokens are embedded with the local `embed` model (nomic, with its `search_document:` /
+`search_query:` prefixes). Only new or changed files are re-embedded. The MCP tool `lm_search` refreshes the
+index before every query, so there is no separate indexing step from Claude Code.
+
 ## MCP server for Claude Code
 
 Register once (user scope, works in every project):
@@ -51,7 +64,11 @@ Register once (user scope, works in every project):
 claude mcp add --scope user lmagent -- python "E:/Projects/lm agent/mcp_server.py"
 ```
 
-Tools exposed: `lm_delegate`, `lm_summarize_files`, `lm_batch`, `lm_models`, `lm_tasks`.
+Tools exposed: `lm_delegate`, `lm_summarize_files`, `lm_batch`, `lm_search`, `lm_index`, `lm_models`, `lm_tasks`.
+
+A `local-worker` subagent (`~/.claude/agents/local-worker.md`, runs on Haiku) wraps these tools: the main
+Claude session delegates a job to it, it dispatches to the local models and returns a compact answer, so the
+big content never enters the main context.
 Results longer than `output.inline_limit` characters are written to a file and only the path plus the
 head of the text comes back, so the cloud context stays small.
 
@@ -85,9 +102,10 @@ Shows runs, calls, input/output tokens handled locally, wall time and model load
 
 ```
 lmagent/
-  client.py     LM Studio REST + lms CLI
+  client.py     LM Studio REST client (discovery, load/unload, chat, embeddings, retries)
   config.py     layered YAML config
   chunker.py    token counting, splitting, file discovery
+  index.py      incremental embedding index and semantic search
   tasks/        task templates (prompt, role, mode)
   runner.py     orchestration: routing, chunking, parallel map-reduce, output, log
   cli.py        command line

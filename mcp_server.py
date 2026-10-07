@@ -14,6 +14,9 @@ from mcp.server.fastmcp import FastMCP
 
 from lmagent.client import LMStudioClient, LMStudioError
 from lmagent.config import load_config
+# Import at startup on purpose: importing numpy lazily inside a tool call (event-loop thread) deadlocks
+# on Windows while loading its C extension.
+from lmagent.index import Index
 from lmagent.runner import Runner
 from lmagent.tasks import TASKS
 
@@ -102,6 +105,37 @@ def lm_batch(items: list[dict[str, Any]], task: str = "ask", model: str = "", cw
 
     with ThreadPoolExecutor(max_workers=4) as ex:
         return list(ex.map(one, items))
+
+
+def _index(cwd: str | None) -> Index:
+    cfg = load_config(cwd=cwd or os.environ.get("LMAGENT_CWD") or os.getcwd())
+    client = LMStudioClient(cfg["server"]["base_url"], cfg["server"]["timeout"])
+    return Index(cfg, client, cfg["_cwd"])
+
+
+@mcp.tool()
+def lm_index(paths: list[str] | None = None, cwd: str = "") -> dict[str, Any]:
+    """Build or incrementally update the local embedding index of a project (only changed files are
+    re-embedded). Stored in .lmagent/index/. Usually not needed: lm_search refreshes the index itself."""
+    try:
+        return _index(cwd or None).update(paths)
+    except (LMStudioError, OSError, ValueError) as e:
+        return {"error": str(e)}
+
+
+@mcp.tool()
+def lm_search(query: str, k: int = 8, files_only: bool = False, cwd: str = "") -> dict[str, Any]:
+    """Semantic search over the project's files using a local embedding model. Finds where something is
+    handled by meaning, not by exact words. Returns file, line range, score and snippet per hit.
+    The index is refreshed incrementally before searching. Use the hits as `files` for lm_delegate."""
+    try:
+        idx = _index(cwd or None)
+        stats = idx.update(None)
+        hits = idx.search(query, k=k, files_only=files_only)
+        return {"hits": hits, "index": {"files": stats["total_files"], "chunks": stats["total_chunks"],
+                                       "reindexed": stats["indexed"]}}
+    except (LMStudioError, OSError, ValueError) as e:
+        return {"error": str(e)}
 
 
 @mcp.tool()

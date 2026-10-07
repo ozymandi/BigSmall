@@ -1,12 +1,8 @@
 from __future__ import annotations
 
-import json
 import re
-import shutil
-import subprocess
 import time
 from dataclasses import dataclass, field
-from pathlib import Path
 
 import httpx
 
@@ -30,18 +26,12 @@ class ChatResult:
     raw: dict = field(default_factory=dict)
 
 
-def _lms_binary() -> str:
-    found = shutil.which("lms")
-    if found:
-        return found
-    candidate = Path.home() / ".lmstudio" / "bin" / "lms.exe"
-    if candidate.is_file():
-        return str(candidate)
-    raise LMStudioError("lms CLI not found. Install LM Studio and run: lms bootstrap")
-
-
 class LMStudioClient:
-    """Thin wrapper over the LM Studio REST API plus the lms CLI for load/unload."""
+    """LM Studio over its REST API only (no lms CLI: the CLI blocks when run inside an MCP server).
+
+    Uses /api/v1/models for discovery, /api/v1/models/load|unload for lifecycle,
+    /v1/chat/completions and /v1/embeddings for inference.
+    """
 
     def __init__(self, base_url: str = "http://localhost:1234", timeout: float = 900,
                  retries: int = 2, retry_delay: float = 2.0):
@@ -63,12 +53,29 @@ class LMStudioClient:
             return False
 
     def models(self) -> list[dict]:
+        """Normalized model list: id, type (llm|embeddings), state, loaded_context_length, parallel, instance_id."""
         try:
-            r = self.http.get("/api/v0/models")
+            r = self.http.get("/api/v1/models")
         except httpx.HTTPError as e:
             raise LMStudioError(f"LM Studio server not reachable at {self.base_url}: {e}") from e
-        r.raise_for_status()
-        return r.json().get("data", [])
+        if r.status_code >= 400:
+            raise LMStudioError(f"GET /api/v1/models -> HTTP {r.status_code}: {r.text[:300]}")
+        out = []
+        for m in r.json().get("models", []):
+            inst = m.get("loaded_instances") or []
+            cfg = (inst[0].get("config") or {}) if inst else {}
+            mtype = m.get("type")
+            out.append({
+                "id": m.get("key"),
+                "type": "embeddings" if mtype == "embedding" else mtype,
+                "state": "loaded" if inst else "not-loaded",
+                "loaded_context_length": cfg.get("context_length"),
+                "parallel": cfg.get("parallel"),
+                "max_context_length": m.get("max_context_length"),
+                "instance_id": inst[0].get("id") if inst else None,
+                "reasoning": (m.get("capabilities") or {}).get("reasoning"),
+            })
+        return out
 
     def model_info(self, model: str) -> dict | None:
         for m in self.models():
@@ -88,47 +95,55 @@ class LMStudioClient:
         return int(info.get("loaded_context_length") or default)
 
     def loaded_parallel(self, model: str, default: int) -> int:
-        """Number of parallel prediction slots the model was loaded with (from lms ps)."""
-        try:
-            proc = subprocess.run([_lms_binary(), "ps", "--json"], capture_output=True, text=True,
-                                  encoding="utf-8", errors="replace", timeout=30)
-            for m in json.loads(proc.stdout or "[]"):
-                if m.get("identifier") == model or m.get("modelKey") == model:
-                    return int(m.get("parallel") or default)
-        except (OSError, ValueError, subprocess.SubprocessError):
-            pass
-        return default
+        info = self.model_info(model) or {}
+        return int(info.get("parallel") or default)
 
     # --- load / unload ---------------------------------------------------
+    def _load_request(self, body: dict, wait: float) -> dict:
+        try:
+            r = self.http.post("/api/v1/models/load", json=body, timeout=httpx.Timeout(wait, connect=5))
+        except httpx.HTTPError as e:
+            raise LMStudioError(f"load request failed: {e}") from e
+        if r.status_code >= 400:
+            raise LMStudioError(f"load failed: HTTP {r.status_code}: {r.text[:400]}")
+        data = r.json()
+        self.last_load_seconds = float(data.get("load_time_seconds") or 0.0)
+        return data
+
     def load(self, model: str, context_length: int, ttl: int, parallel: int,
-             unload_others: bool = True, wait: float = 180) -> bool:
-        """Load a model via lms load. Returns True if a load happened, False if already loaded."""
-        if self.is_loaded(model):
-            return False
-        if self.model_info(model) is None:
+             unload_others: bool = True, wait: float = 300) -> bool:
+        """Load an LLM. Returns True if a load happened, False if already loaded."""
+        info = self.model_info(model)
+        if info is None:
             raise LMStudioError(f"Model '{model}' is not downloaded in LM Studio.")
+        if info.get("state") == "loaded":
+            return False
         if unload_others:
             for m in self.loaded_llms():
                 self.unload(m["id"])
-        cmd = [_lms_binary(), "load", model, "-y",
-               "--context-length", str(context_length),
-               "--ttl", str(ttl),
-               "--parallel", str(parallel)]
-        t0 = time.time()
-        proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=wait)
-        if proc.returncode != 0:
-            raise LMStudioError(f"lms load failed: {proc.stderr.strip() or proc.stdout.strip()}")
-        deadline = time.time() + wait
-        while time.time() < deadline:
-            if self.is_loaded(model):
-                self.last_load_seconds = time.time() - t0
-                return True
-            time.sleep(1)
-        raise LMStudioError(f"Model '{model}' did not report loaded state within {wait}s.")
+        body = {"model": model, "context_length": int(context_length), "ttl_seconds": int(ttl),
+                "parallel": int(parallel)}
+        self._load_request(body, wait)
+        return True
+
+    def load_embedding(self, model: str, wait: float = 120) -> bool:
+        """Load an embedding model next to whatever LLM is loaded (they are small)."""
+        info = self.model_info(model)
+        if info is None:
+            raise LMStudioError(f"Embedding model '{model}' is not downloaded in LM Studio.")
+        if info.get("state") == "loaded":
+            return False
+        self._load_request({"model": model}, wait)
+        return True
 
     def unload(self, model: str) -> None:
-        subprocess.run([_lms_binary(), "unload", model], capture_output=True, text=True,
-                       encoding="utf-8", errors="replace", timeout=60)
+        info = self.model_info(model) or {}
+        instance = info.get("instance_id") or model
+        try:
+            self.http.post("/api/v1/models/unload", json={"instance_id": instance},
+                           timeout=httpx.Timeout(120, connect=5))
+        except httpx.HTTPError as e:
+            raise LMStudioError(f"unload request failed: {e}") from e
 
     # --- inference -------------------------------------------------------
     def chat(self, model: str, messages: list[dict], temperature: float = 0.2,
@@ -197,7 +212,10 @@ class LMStudioClient:
             attempt += 1
 
     def embed(self, model: str, texts: list[str]) -> list[list[float]]:
-        r = self.http.post("/v1/embeddings", json={"model": model, "input": texts})
+        try:
+            r = self.http.post("/v1/embeddings", json={"model": model, "input": texts})
+        except httpx.HTTPError as e:
+            raise LMStudioError(f"embeddings request failed: {e}") from e
         if r.status_code >= 400:
             raise LMStudioError(f"HTTP {r.status_code}: {r.text[:800]}")
         return [d["embedding"] for d in r.json()["data"]]

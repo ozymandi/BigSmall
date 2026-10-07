@@ -74,6 +74,36 @@ def cmd_run(args, cfg):
         print(f"  note: {n}", file=sys.stderr)
 
 
+def _index(cfg, root):
+    from .index import Index
+    from pathlib import Path
+    root = Path(root) if root else Path(cfg["_cwd"])
+    return Index(cfg, LMStudioClient(cfg["server"]["base_url"], cfg["server"]["timeout"]), root)
+
+
+def cmd_index(args, cfg):
+    s = _index(cfg, args.root).update(args.paths or None)
+    print(f"indexed {s['indexed']} file(s) ({s['chunks']} chunks), unchanged {s['unchanged']}, "
+          f"removed {s['removed']}, skipped {s['skipped']}; total {s['total_files']} files / {s['total_chunks']} chunks")
+
+
+def cmd_search(args, cfg):
+    idx = _index(cfg, args.root)
+    if not args.no_update:
+        idx.update(None)
+    hits = idx.search(args.query, k=args.k, files_only=args.files)
+    if args.json:
+        print(json.dumps(hits, ensure_ascii=False, indent=2))
+        return
+    for h in hits:
+        print(f"{h['score']:.3f}  {h['file']}:{h['start_line']}-{h['end_line']}")
+        if not args.files:
+            snippet = h["text"].strip().splitlines()
+            for line in snippet[:args.lines]:
+                print(f"        {line[:160]}")
+            print()
+
+
 def cmd_stats(args, cfg):
     s = Runner(cfg).stats(days=args.days, by=args.by)
     if args.json:
@@ -124,6 +154,21 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--in-place", action="store_true", help="rewrite: overwrite source files instead of writing to .lmagent/out")
     s.add_argument("--json", action="store_true", help="print the full result as JSON")
     s.set_defaults(fn=cmd_run)
+
+    s = sub.add_parser("index", help="build or update the embedding index of a directory")
+    s.add_argument("paths", nargs="*", help="files/dirs/globs to index (default: whole root)")
+    s.add_argument("--root", help="index root (default: current directory)")
+    s.set_defaults(fn=cmd_index)
+
+    s = sub.add_parser("search", help="semantic search over the embedding index")
+    s.add_argument("query")
+    s.add_argument("-k", type=int, default=8, help="number of hits")
+    s.add_argument("--files", action="store_true", help="one hit per file")
+    s.add_argument("--lines", type=int, default=6, help="snippet lines to show per hit")
+    s.add_argument("--no-update", action="store_true", help="do not refresh the index before searching")
+    s.add_argument("--root", help="index root (default: current directory)")
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(fn=cmd_search)
 
     s = sub.add_parser("stats", help="offloaded token report from the run log")
     s.add_argument("--days", type=int, help="only the last N days (default: all)")

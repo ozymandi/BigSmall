@@ -34,6 +34,13 @@ chunking:
   min_chunk_tokens: 6000  # prefer fewer workers over chunks smaller than this
   max_file_bytes: 5000000
 
+index:
+  dir: .lmagent/index     # relative to the indexed root
+  chunk_tokens: 400       # nomic embed context is 2048 tokens
+  overlap_tokens: 40
+  batch: 32               # texts per embeddings request
+  exclude: ["*.lock", "*.min.js", "*.min.css", "*.map", "*.svg", "*.ipynb", "package-lock.json", "yarn.lock"]
+
 output:
   dir: .lmagent/out       # relative to the working directory
   inline_limit: 6000      # chars returned inline to the caller; longer results also go to a file
