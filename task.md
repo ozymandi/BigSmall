@@ -64,10 +64,11 @@ Repo: https://github.com/ozymandi/BigSmall
 
 ## Next step
 
-1. New Claude Code session on another project: try `lm_search` + `lm_delegate` directly and through the
-   `local-worker` subagent; collect which tasks are worth delegating and where prompts need tuning.
-2. Done 2026-10-07: `bulk` role set to Qwen (designer's decision). Nemotron stays downloaded but unused
-   by default; summarize/classify no longer trigger a model switch.
+See `ROADMAP.md`. Start with item 1 (live trial in a fresh Claude Code session on another project) and
+item 2 (usage rule in the global CLAUDE.md). Items 3-6 are decided after the trial.
+
+Decided 2026-10-07: `bulk` role set to Qwen (designer's decision). Nemotron stays downloaded but unused
+by default; summarize/classify no longer trigger a model switch.
 
 ## Open questions
 
