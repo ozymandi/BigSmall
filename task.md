@@ -108,9 +108,14 @@ Bugs and tuning found:
 - Verified on this repo: "how are retries handled" -> correct answer in 5.8 s, 5.1k tokens local,
   claims checked against `client.py`. The MCP process must be restarted for the new parameters.
 
+### Phase 8: tests (roadmap item 3). Done 2026-10-07
+- `tests/` with a fake LM Studio client (no server needed), 31 tests, 0.4 s: chunker, planner (89k/32k,
+  output ratios, worker reduction), incremental index (unchanged/changed/deleted/excluded, kind filter),
+  output cleaning, config layering, rewrite guardrails end to end. `pip install -e .[dev]`, `python -m pytest`.
+
 ## Next step
 
-Roadmap item 3 (tests), then 6 (text role model).
+Roadmap item 6: compare Gemma vs Qwen for the `text` role.
 
 ## Open questions
 

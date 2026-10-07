@@ -15,6 +15,9 @@ dependencies = [
     "mcp>=1.2",
 ]
 
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
 [project.scripts]
 lmagent = "lmagent.cli:main"
 
@@ -23,3 +26,7 @@ packages = ["lmagent", "lmagent.tasks"]
 
 [tool.setuptools.package-data]
 lmagent = ["default_config.yaml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["tests", "."]

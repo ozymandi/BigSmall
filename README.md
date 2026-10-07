@@ -215,8 +215,21 @@ lmagent/
   chunker.py    token counting, splitting, file discovery
   index.py      incremental embedding index and semantic search
   answer.py     answer a question from the top search hits (search --ask, lm_search ask=)
+  tests/        pytest suite with a fake LM Studio client: chunker, planner, index, rewrite guardrails, config
   tasks/        task templates (prompt, role, mode)
   runner.py     orchestration: routing, chunking, parallel map-reduce, output, log
   cli.py        command line
 mcp_server.py   MCP stdio server for Claude Code
 ```
+
+## Tests
+
+```bash
+pip install -e .[dev]
+python -m pytest -q
+```
+
+No LM Studio needed: `tests/conftest.py` fakes the client (scripted model list, toy embeddings, scripted
+chat replies). Covered: `split_text` / `split_lines`, the chunk planner at 89k and 32k contexts, incremental
+index updates and excludes, search `kind` filter, output cleaning, config layering, and the `rewrite`
+guardrails end to end.

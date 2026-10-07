@@ -24,13 +24,13 @@ In a fresh Claude Code session on another project:
       anything needing judgement on the final code). Without it Claude will not pick the tools on its own.
 - [ ] Optionally the same rule as a project `CLAUDE.md` snippet for repos where it matters most.
 
-## 3. Tests (2 h)
+## 3. Tests (2 h). Done 2026-10-07
 
-- [ ] pytest for `chunker.split_text` (budget, overlap, giant lines), `index.split_lines` (line ranges).
-- [ ] Planner (`Runner._plan`) with a fake client: Qwen 89k / 32k contexts, each task's `output_ratio`,
+- [x] pytest for `chunker.split_text` (budget, overlap, giant lines), `index.split_lines` (line ranges).
+- [x] Planner (`Runner._plan`) with a fake client: Qwen 89k / 32k contexts, each task's `output_ratio`,
       worker reduction only when it buys a bigger chunk.
-- [ ] `Index.update` incremental logic with a fake embedder: unchanged, changed, deleted, excluded files.
-- [ ] `_parse_json` / `strip_fences`, config layering.
+- [x] `Index.update` incremental logic with a fake embedder: unchanged, changed, deleted, excluded files.
+- [x] `_parse_json` / `strip_fences`, config layering.
 
 ## 4. Answer on top of search (1-2 h). Done 2026-10-07
 
