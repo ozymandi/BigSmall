@@ -98,6 +98,97 @@ lmagent stats --days 7 --by task # per task, last week; also --by model, --by cw
 
 Shows runs, calls, input/output tokens handled locally, wall time and model load time.
 
+## Pipeline
+
+### Entry points
+
+```
+A) Claude Code ──► lm_* MCP tool ──────────────────────────► lmagent core ──► LM Studio
+B) Claude Code ──► Agent(local-worker, Haiku) ──► lm_* tool ──► lmagent core ──► LM Studio
+C) shell       ──► lmagent run / search ───────────────────► lmagent core ──► LM Studio
+```
+
+- **A, direct tool call.** The main session calls `lm_delegate`, `lm_summarize_files`, `lm_batch` or
+  `lm_search`. The local model reads the inputs; the main context receives only the compact result
+  (text up to `output.inline_limit` chars, or a file path), the model id, offloaded token counts and notes.
+- **B, subagent.** The main session hands a whole job to `local-worker` (`~/.claude/agents/local-worker.md`,
+  runs on Haiku, has only the `lm_*` tools and `Glob`). The subagent chains several tool calls, typically
+  `lm_search` to locate files and then `lm_delegate` on them; all intermediate results stay in the subagent's
+  context and only its final answer returns to the main session. Use it when the job needs more than one
+  tool call or when the main context must stay as small as possible.
+- **C, CLI.** Same core, for scripts and manual use. `--json` prints the full result object.
+
+### One delegation call, step by step
+
+1. **Config.** Layers merged in this order: package default, `~/.lmagent/config.yaml`, `./lmagent.yaml`,
+   `LMAGENT_CONFIG`/`--config`. The project directory (`cwd` argument or the working directory) is fixed
+   here; every relative path below resolves against it.
+2. **Inputs.** Each entry in `files` may be a file, a directory (walked recursively) or a glob. Dropped:
+   binaries (NUL byte in the first 8 KB), files over `chunking.max_file_bytes`, and anything under `.git`,
+   `node_modules`, `__pycache__`, `.venv`, `.lmagent`, `dist`, `build`, `.next`. Inline `text` is appended as
+   one more item. Skips are reported in `notes`.
+3. **Task template.** Picks the role (`code`, `text`, `bulk`), the processing mode, the system and user
+   prompts, the reduce prompt, an optional JSON schema, and `output_ratio` (expected output size relative to
+   the input, e.g. 1.2 for translate/rewrite, 0.15 for summarize).
+4. **Model.** An explicit `model` wins. Otherwise, with `load.policy: smart`: if the role model is loaded or
+   nothing is loaded, use the role model; if another LLM is loaded, switch only when the input is at least
+   `load.switch_min_tokens`, otherwise reuse the loaded one (noted in `notes`). `strict` always uses the role
+   model, `prefer_loaded` never switches. A switch unloads other LLMs and calls `POST /api/v1/models/load`
+   with `context_length`, `ttl_seconds` and `parallel`; the load time is recorded.
+5. **Plan.** Reads the loaded context length and slot count from `GET /api/v1/models` and derives the number
+   of workers and the chunk budget so that, per worker,
+   `chunk x token_safety + output + overhead <= ctx / workers`, where output is the larger of
+   `generation.reserve_tokens` and `chunk x token_safety x output_ratio`, and output must also fit
+   `generation.max_tokens`. Workers are reduced only when that actually buys a bigger chunk.
+6. **Chunking.** Line-based split under the budget with `chunking.overlap_tokens` of overlap. For
+   non-per-file modes all inputs are first joined with `### FILE: path` headers (a single input has no header).
+7. **Mode.** See the branches below.
+8. **Call.** `POST /v1/chat/completions` with system + user prompt, `temperature`, `max_tokens`,
+   `reasoning_effort: none` (unless `generation.thinking: true`) and, for schema tasks, a strict JSON
+   `response_format`. Retries on timeouts, connection errors, 5xx and "model not loaded" (the model is
+   reloaded first). If the server answers "context size exceeded", the chunk is split in half and both halves
+   are retried. `<think>` blocks are stripped from the answer.
+9. **Output.** `rewrite` writes each file to `.lmagent/out/<path>` or, with `in_place`, over the source.
+   An explicit `output_file` is written as given. A result longer than `output.inline_limit` is also written
+   to `.lmagent/out/<timestamp>_<task>.<ext>`.
+10. **Log.** One JSON line per run in `~/.lmagent/log.jsonl`: task, model, calls, tokens in/out, wall time,
+    load time, output path. `lmagent stats` aggregates it.
+11. **Return.** CLI prints the text; the MCP tool returns `{result, truncated, output_path, files_written,
+    model, offloaded_tokens, calls, elapsed_s, notes}` or `{error}`.
+
+### Mode branches
+
+- **`auto`** (`ask`, `explain_diff`): if the joined input fits one chunk, a single call. Otherwise the
+  `map_reduce` branch.
+- **`single`** (`generate`): always one call. If the input does not fit, only the first chunk is sent and a
+  note says so. Output code fences around whole-file results are stripped.
+- **`per_chunk`** (`translate`): every chunk is processed independently in parallel; outputs are joined in
+  the original order. Chunks are sized so that the output fits `max_tokens` (ratio 1.2).
+- **`per_file`** (`rewrite`, `classify`): each file is processed on its own, files in parallel.
+  - `rewrite` (sub-mode `per_chunk`): a file larger than the budget is processed chunk by chunk and
+    reassembled; the result is the complete new file content, written to disk, and the returned text is the
+    list `path -> written path`.
+  - `classify` (sub-mode `single`, JSON schema): one call per file, truncated to the first chunk if huge;
+    results are merged into one JSON array `[{file, label, confidence, reason}]`.
+- **`map_reduce`** (`summarize`, `extract`, and `auto` overflow): chunks are processed in parallel into
+  partial answers. Partials are then grouped into batches that fit the budget and reduced with the task's
+  reduce prompt (`MERGE_SYSTEM`); if more than one batch remains, the reduction repeats on the batch results
+  until one answer is left. `extract` reduces JSON arrays into one deduplicated array.
+- **`lm_batch`**: independent jobs run concurrently, each through the full pipeline above, up to 4 at once.
+
+### Search branch (`lm_search`, `lmagent search`)
+
+1. Load `.lmagent/index/` if present (`meta.json` + `vectors.npy`); an index built with a different
+   embedding model or chunk size is rebuilt.
+2. Walk the root (same skip rules as above, plus `index.exclude` patterns). Files whose size and mtime are
+   unchanged keep their vectors; new or changed files are re-chunked (`index.chunk_tokens`, line ranges kept)
+   and embedded in batches with the `search_document:` prefix; deleted files are dropped.
+3. Make sure the embedding model is loaded (it JIT-loads next to the LLM and is never swapped out), save
+   the index.
+4. Embed the query with the `search_query:` prefix, rank all chunks by cosine similarity, return the top `k`
+   as `{file, start_line, end_line, score, text}`; with `files_only`, the best chunk per file.
+5. Typical chain: `lm_search` to find where something lives, then `lm_delegate` with those files.
+
 ## Layout
 
 ```
