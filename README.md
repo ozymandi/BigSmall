@@ -90,7 +90,7 @@ Layers, later wins: `lmagent/default_config.yaml` < `~/.lmagent/config.yaml` < `
 |---|---|
 | `models.code/text/bulk/embed` | model id per role |
 | `load.policy` | `smart` (default) switches to the role model only for inputs of at least `load.switch_min_tokens`; `prefer_loaded` never switches; `strict` always loads the role model |
-| `load.context_length`, `load.ttl`, `load.parallel` | passed to `lms load` |
+| `load.context_length`, `load.ttl`, `load.parallel` | sent to `POST /api/v1/models/load` (default context 89344) |
 | `server.retries`, `server.retry_delay` | retries on timeouts, connection errors, 5xx and unloaded-model errors (the model is reloaded automatically) |
 | `generation.max_tokens`, `generation.reserve_tokens` | output cap per call; output room reserved per worker when planning chunks |
 | `generation.thinking` | `false` sends `reasoning_effort: none`, which is what actually disables reasoning in LM Studio (Qwen and Nemotron verified) |
