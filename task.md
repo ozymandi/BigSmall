@@ -138,10 +138,17 @@ Decided 2026-10-07: `load.context_length` default raised to 89344 (designer).
   instead of 2 retries with backoff and a stack of httpx text.
 - `examples/` with three `lmagent.yaml` variants and a README.
 
+### Phase 11: verification after session restart. Done 2026-10-07
+- New Claude Code session: the MCP schema now exposes `lm_search(kind=, ask=)`, async tools respond.
+- `lm_models`: all LLMs unloaded at start, only nomic embed loaded (TTL expired).
+- `lm_search(kind=code, ask="how does the client retry / reload")` on this repo: Qwen loaded in 8 s,
+  answer in 6 s, 4.9k tokens in / 0.5k out locally; 12 hits, all code/yaml (no markdown). Every claim
+  (RETRYABLE_STATUS set, NOT_LOADED_MARKERS, retries 2 / delay 2 s doubled, `on_not_loaded -> Runner._reload`)
+  checked against `client.py`, `runner.py`, `default_config.yaml`; line citations within a few lines of the real ones.
+
 ## Next step
 
-Roadmap fully done, including the "Later" items. Nothing scheduled. The MCP server process
-needs a new Claude Code session to pick up the async tools and `lm_search(kind=, ask=)`.
+Roadmap fully done and verified in a fresh session. Nothing scheduled.
 
 ## Open questions
 
