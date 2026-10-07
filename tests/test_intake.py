@@ -46,7 +46,8 @@ def test_task_flow_writes_digest_raw_and_run(cfg):
     assert res.digest.startswith("## Клієнт")
     assert Path(res.digest_path) == Path(cfg["_cwd"]) / "intake" / "digest.md"
     body = Path(res.digest_path).read_text(encoding="utf-8")
-    assert body.startswith("<!-- lmagent intake") and body.rstrip().endswith("(task)")
+    assert body.startswith("<!-- lmagent intake") and "- ACME (task)" in body
+    assert body.rstrip().endswith("- вкладень немає")          # no attachment list in the raw outputs
     raw = sorted(p.name for p in Path(res.raw_dir).iterdir())
     assert raw == ["01_get_task.json", "02_get_file_content.json"]
     assert json.loads((Path(res.raw_dir) / "02_get_file_content.json").read_text(encoding="utf-8"))["output"] == "brief text"
@@ -108,3 +109,33 @@ def test_chat_agent_parses_blocks(monkeypatch):
     assert r.text == "## Digest\n- done" and r.messages == ["Working...", "## Digest\n- done"]
     assert [t["tool"] for t in r.tool_calls] == ["get_task"] and r.invalid[0]["reason"] == "bad json"
     assert (r.prompt_tokens, r.completion_tokens) == (10, 5)
+
+
+def test_task_flow_downloads_docs_into_intake_files(cfg):
+    blocks = json.dumps([{"type": "text", "text": json.dumps({
+        "task_files": [{"id": 11, "size": "500", "name": "brief.pdf"},
+                       {"id": 12, "size": "79299367", "name": "Landing page.mov"}],
+        "comment_files": [{"id": 13, "size": "16500000", "name": "photos.zip"}]})}])
+    calls = [{"tool": "get_all_task_attachments", "arguments": {"task_id": "2"}, "output": blocks}]
+    client = AgentFake([(calls, "## Клієнт і контекст\n- ACME (task)")])
+    reads = []
+
+    def reader(uri):
+        reads.append(uri)
+        return b"PDF" if uri.endswith("/11") else b"ZIP"
+
+    res = Intake(cfg, client=client, resource_reader=reader).run("https://a.worksection.com/project/1/2/")
+    files = Path(cfg["_cwd"]) / "intake" / "files"
+    assert sorted(p.name for p in files.iterdir()) == ["brief.pdf", "photos.zip"]
+    assert (files / "brief.pdf").read_bytes() == b"PDF" and reads == ["worksection://file/11", "worksection://file/13"]
+    assert [s["name"] for s in res.files_saved] == ["brief.pdf", "photos.zip"]
+    assert res.files_skipped[0]["name"] == "Landing page.mov" and res.files_skipped[0]["reason"] == "not a document"
+    assert "## Файли на диску" in res.digest and "пропущено: Landing page.mov" in res.digest
+    run = json.loads((Path(cfg["_cwd"]) / "intake" / "run.json").read_text(encoding="utf-8"))
+    assert run["files_saved"][1]["name"] == "photos.zip"
+
+    # download=none: nothing fetched, nothing written
+    client2 = AgentFake([(calls, "## x")])
+    res2 = Intake(cfg, client=client2, resource_reader=lambda u: (_ for _ in ()).throw(AssertionError("no reads"))
+                  ).run("https://a.worksection.com/project/1/3/", download="none", out="intake/d2.md")
+    assert res2.files_saved == [] and len(res2.files_skipped) == 3

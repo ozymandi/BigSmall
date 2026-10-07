@@ -187,6 +187,21 @@ Findings, all measured on LM Studio 0.4.25:
 - Prerequisites recorded in usage.md: Worksection MCP running, listed in ~/.lmstudio/mcp.json,
   Require Authentication + token, "Allow calling servers from mcp.json".
 
+### Phase 14: attachments into the project folder. Done 2026-10-07
+- `lmagent/wsfiles.py`: after the agent run lmagent itself (no model) lists the attachments from the saved
+  `get_all_task_attachments` / `get_task_files` / `get_project_files` outputs, filters them
+  (`intake.download`: docs | all | none, `download_max_mb` 30) and reads each one as the MCP resource
+  `worksection://file/<id>` straight from the Worksection server (`intake.mcp_url`), writing the bytes to
+  `intake/files/<original name>` (duplicate names get `_<id>`). Archives are saved as they are, never
+  unpacked (designer's decision). The digest gets a "Файли на диску" section: saved, skipped with reason,
+  errors. `files_saved/skipped/errors` in run.json and the MCP result.
+- Gotcha: FastMCP serializes a resource function that returns a dict as JSON text, so the server's
+  `{"uri","mimeType","blob"}` arrives inside `text` and must be unwrapped (`bytes_from_contents`). The first
+  live try wrote base64 JSON into the .pdf files.
+- CLI `lmagent intake --files docs|all|none`, MCP `lm_intake(files=)`. 56 tests.
+- Live on the trial task: 40 attachments listed, 10 documents fetched (3 PDF, 5 HTML, 2 ZIP, 51 MB), 30
+  skipped (videos, screenshots, PNG), 2.8 s from the server cache, real file types verified.
+
 ## Next step
 
 Intake works end to end; the MCP server needs a new Claude Code session to expose `lm_intake`.

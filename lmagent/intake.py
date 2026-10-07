@@ -17,6 +17,7 @@ from typing import Callable
 from .client import LMStudioClient, AgentResult
 from .runner import Runner, RunResult
 from .tasks import TASKS
+from . import wsfiles
 
 ProgressCb = Callable[[int, int, str], None]
 
@@ -129,6 +130,9 @@ class IntakeResult:
     elapsed: float = 0.0
     calls: int = 0
     notes: list[str] = field(default_factory=list)
+    files_saved: list[dict] = field(default_factory=list)
+    files_skipped: list[dict] = field(default_factory=list)
+    files_errors: list[dict] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         d = {k: v for k, v in self.__dict__.items() if k != "tool_calls"}
@@ -138,12 +142,16 @@ class IntakeResult:
 
 
 class Intake:
-    def __init__(self, cfg: dict, client: LMStudioClient | None = None):
+    def __init__(self, cfg: dict, client: LMStudioClient | None = None,
+                 resource_reader: wsfiles.ResourceReader | None = None):
         self.cfg = cfg
         self.icfg = cfg["intake"]
         self.cwd = Path(cfg["_cwd"])
         self.runner = Runner(cfg, client=client)
         self.client = self.runner.client
+        # reads worksection://file/<id> bytes from the MCP server; injectable for tests
+        self.resource_reader = resource_reader or wsfiles.mcp_resource_reader(
+            self.icfg.get("mcp_url", "http://127.0.0.1:8000/mcp"))
 
     # --- pieces -----------------------------------------------------------
     def _integrations(self) -> list[dict]:
@@ -197,7 +205,7 @@ class Intake:
 
     # --- entry point ------------------------------------------------------
     def run(self, url: str, lang: str | None = None, out: str | None = None,
-            on_progress: ProgressCb | None = None) -> IntakeResult:
+            on_progress: ProgressCb | None = None, download: str | None = None) -> IntakeResult:
         link = parse_link(url)
         lang = lang or self.icfg.get("lang", "Ukrainian")
         out_path = self.cwd / (out or self.icfg.get("out", "intake/digest.md"))
@@ -259,6 +267,14 @@ class Intake:
         if not digest.strip():
             notes.append("the model returned no digest text; see intake/raw and run.json")
 
+        # attachments into the project folder, no model involved
+        mode = (download or self.icfg.get("download", "docs") or "docs").lower()
+        files_dir = self.cwd / self.icfg.get("files_dir", "intake/files")
+        atts = wsfiles.attachments_from_raw(raw_dir)
+        rep = wsfiles.download(atts, files_dir, mode, float(self.icfg.get("download_max_mb", 30)),
+                               self.resource_reader, on_progress=on_progress)
+        digest = digest.rstrip() + "\n\n" + rep.section(str(files_dir.relative_to(self.cwd)))
+
         out_path.parent.mkdir(parents=True, exist_ok=True)
         header = (f"<!-- lmagent intake | {url} | {model} | {len(calls)} tool calls | "
                   f"in {ptok} / out {ctok} tok | {time.time() - t0:.0f}s -->\n\n")
@@ -266,7 +282,8 @@ class Intake:
         res = IntakeResult(digest=digest, digest_path=str(out_path), raw_dir=str(raw_dir),
                            tool_calls=calls, invalid=invalid, model=model, prompt_tokens=ptok,
                            completion_tokens=ctok, elapsed=time.time() - t0, calls=len(results),
-                           notes=notes)
+                           notes=notes, files_saved=rep.saved, files_skipped=rep.skipped,
+                           files_errors=rep.errors)
         (out_path.parent / "run.json").write_text(json.dumps(res.to_dict(), ensure_ascii=False, indent=1),
                                                   encoding="utf-8", newline="\n")
         self.runner._log(RunResult(task="intake", model=model, text=digest, output_path=str(out_path),

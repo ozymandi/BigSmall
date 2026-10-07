@@ -117,7 +117,7 @@ async def lm_summarize_files(files: list[str], ctx: Context, focus: str = "every
 
 @mcp.tool()
 async def lm_intake(link: str, ctx: Context, cwd: str = "", lang: str = "",
-                    output_file: str = "") -> dict[str, Any]:
+                    output_file: str = "", files: str = "") -> dict[str, Any]:
     """Project intake on the designer's command ("читай агентом <link>"): the local model reads a
     Worksection project or task itself through the Worksection MCP server (tasks, comments, PDF/docx
     attachments) and writes a digest. Only the digest comes back; raw tool outputs are saved under
@@ -128,10 +128,13 @@ async def lm_intake(link: str, ctx: Context, cwd: str = "", lang: str = "",
         cwd: the new project folder, absolute. The digest goes to <cwd>/intake/digest.md.
         lang: digest language (default: intake.lang in the config, Ukrainian).
         output_file: digest path relative to cwd (default intake/digest.md).
+        files: attachments copied into <cwd>/intake/files after the run: docs (default) | all | none.
+            Archives are saved as they are. Bigger than intake.download_max_mb are only listed.
     """
     def job(on_progress):
         cfg = load_config(cwd=cwd or os.environ.get("LMAGENT_CWD") or os.getcwd())
-        res = Intake(cfg).run(link, lang=lang or None, out=output_file or None, on_progress=on_progress)
+        res = Intake(cfg).run(link, lang=lang or None, out=output_file or None, on_progress=on_progress,
+                              download=files or None)
         d = res.to_dict()
         d["digest"] = res.digest
         return d

@@ -53,6 +53,10 @@ intake:
   max_tool_calls: 40      # soft cap passed to the model; LM Studio has no server-side limit
   max_tasks: 20           # project link: tasks are digested one by one, then merged
   max_output_tokens: 6000
+  mcp_url: http://127.0.0.1:8000/mcp   # the same server, read directly by lmagent to fetch attachment bytes
+  download: docs          # attachments copied into files_dir after the run: docs | all | none
+  download_max_mb: 30     # bigger files are only listed; archives are saved as they are, never unpacked
+  files_dir: intake/files
   allowed_tools: [get_project, get_tasks, get_task, get_task_subtasks, get_task_discussion, get_comments,
                   get_all_task_attachments, get_task_files, get_project_files, get_file_content,
                   get_offloaded_response_info, read_offloaded_response_text]

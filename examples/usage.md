@@ -139,7 +139,9 @@ loop (`POST /api/v1/chat` with `integrations`): the local model calls the Workse
 (task, discussion, attachments, `get_file_content` for pdf/docx/xlsx/pptx) and writes `intake/digest.md`
 with fixed sections (client, scope, deliverables, deadlines, constraints, attachments, discussion, open
 questions, facts for the estimate). Every tool output is kept in `intake/raw/NN_<tool>.json`, the call log
-in `intake/run.json`. Claude reads only the digest.
+in `intake/run.json`. Claude reads only the digest. Attachments are then copied by lmagent itself (no model)
+into `intake/files/`: `--files docs` (default: pdf, docx, xlsx, pptx, txt, md, html, zip; archives stay
+packed), `all` (plus images and video) or `none`; files over `intake.download_max_mb` (30) are only listed.
 
 Requirements: the Worksection MCP server running (`uv run python -m worksection_mcp`, port 8000), listed in
 `~/.lmstudio/mcp.json` under the label from `intake.mcp`; LM Studio Server Settings: Require Authentication

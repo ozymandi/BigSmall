@@ -134,7 +134,7 @@ def cmd_search(args, cfg):
 def cmd_intake(args, cfg):
     from .intake import Intake
     cb = (lambda d, t, m: print(f"[{d}/{t}] {m}", file=sys.stderr)) if sys.stderr.isatty() else None
-    res = Intake(cfg).run(args.link, lang=args.lang, out=args.output, on_progress=cb)
+    res = Intake(cfg).run(args.link, lang=args.lang, out=args.output, on_progress=cb, download=args.files)
     if args.json:
         print(json.dumps(res.to_dict(), ensure_ascii=False, indent=1))
         return 0
@@ -222,6 +222,8 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("link", help="https://<acct>.worksection.com/project/<pid>/[<task_id>/]")
     s.add_argument("--lang", help="digest language (default: intake.lang)")
     s.add_argument("-o", "--output", help="digest path (default: intake.out = intake/digest.md)")
+    s.add_argument("--files", choices=["docs", "all", "none"],
+                   help="attachments to copy into intake/files (default: intake.download = docs)")
     s.add_argument("--json", action="store_true")
     s.set_defaults(fn=cmd_intake)
 
