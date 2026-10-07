@@ -1,4 +1,9 @@
-# Per-project `lmagent.yaml` examples
+# Examples
+
+`usage.md`: the common uses of the pipeline, each as a CLI command and the matching MCP call, plus
+troubleshooting.
+
+## Per-project `lmagent.yaml` examples
 
 Copy one of these into the project root as `lmagent.yaml` (or merge the keys you need). It is layered
 on top of the package defaults and `~/.lmagent/config.yaml`; lists such as `index.exclude` are replaced,

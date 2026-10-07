@@ -216,12 +216,18 @@ lmagent/
   index.py      incremental embedding index and semantic search
   answer.py     answer a question from the top search hits (search --ask, lm_search ask=)
   tests/        pytest suite with a fake LM Studio client: chunker, planner, index, rewrite guardrails, config
-  examples/     per-project lmagent.yaml examples (log-heavy, monorepo, translation)
+  examples/     usage cookbook and per-project lmagent.yaml examples (log-heavy, monorepo, translation)
   tasks/        task templates (prompt, role, mode)
   runner.py     orchestration: routing, chunking, parallel map-reduce, output, log
   cli.py        command line
 mcp_server.py   MCP stdio server for Claude Code
 ```
+
+## Common uses
+
+`examples/usage.md` walks through the typical jobs (logs, "where is X", answers with citations, extract,
+classify, safe bulk rewrite, translate, diffs, generate, batch, the subagent, stats) with the CLI command
+and the matching MCP call for each, plus troubleshooting.
 
 ## Per-project config
 
