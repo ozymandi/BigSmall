@@ -1,0 +1,11 @@
+# lmagent.yaml for a monorepo with vendored forks and generated code.
+# `dir/` skips that directory anywhere in the tree, `path/*` a path from the root. Without this the
+# vendored code dominates the index (a 411-file fork tripled it in the live trial) and search hits.
+
+index:
+  exclude: ["*.lock", "*.min.js", "*.min.css", "*.map", "*.svg", "*.ipynb", "package-lock.json", "yarn.lock",
+            "vendor/", "third_party/", "*-fork/", "generated/", "__generated__/", "dist/*", "*.pb.go", "*.d.ts"]
+  answer_k: 8                 # fewer, more relevant excerpts per `search --ask`
+
+chunking:
+  max_parallel: 4

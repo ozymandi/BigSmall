@@ -53,8 +53,10 @@ In a fresh Claude Code session on another project:
 - [x] Run `translate` and `summarize` on the same inputs with Gemma 4 31B and Qwen, compare quality and time.
 - [x] If the difference is small, set `text` to Qwen too: then no model switching happens at all.
 
-## Later, not scheduled
+## Later. Done 2026-10-07
 
-- Progress notifications for long MCP runs.
-- Friendly error when the LM Studio server is down, with the command to start it.
-- Per-project `lmagent.yaml` examples (e.g. smaller chunks for log-heavy repos).
+- [x] Progress notifications for long MCP runs (`on_progress` in the runner, async MCP tools with
+      `report_progress`, `[done/total]` line in the CLI).
+- [x] Friendly error when the LM Studio server is down, with the command to start it (`LMStudioDown`,
+      no retries on connection errors).
+- [x] Per-project `lmagent.yaml` examples in `examples/` (log-heavy, monorepo, translation).

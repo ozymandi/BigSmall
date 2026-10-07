@@ -1,0 +1,13 @@
+# lmagent.yaml for a documentation repo where translation quality matters more than speed.
+# Measured 2026-10-07: Gemma 4 31B translated a little better than Qwen 3.8 27B but took 3x longer plus a
+# 13-22 s model switch. `strict` makes every `text` task load its role model instead of reusing whatever
+# is in VRAM.
+
+models:
+  text: google/gemma-4-31b
+
+load:
+  policy: strict              # always switch to the role model (default: smart, switch only for big inputs)
+
+generation:
+  temperature: 0.1

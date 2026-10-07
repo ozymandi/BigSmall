@@ -16,6 +16,16 @@ class LMStudioError(RuntimeError):
     pass
 
 
+class LMStudioDown(LMStudioError):
+    """The server does not answer at all (not started, wrong port). Never retried."""
+
+
+CONNECT_ERRORS = (httpx.ConnectError, httpx.ConnectTimeout)
+START_HINT = ("LM Studio server is not reachable at {url}. Start it: open LM Studio -> Developer -> "
+              "Start Server, or run `lms server start` (lms lives in ~/.lmstudio/bin). "
+              "Check `server.base_url` in the config if it runs on another port.")
+
+
 @dataclass
 class ChatResult:
     content: str
@@ -44,6 +54,9 @@ class LMStudioClient:
         self.on_not_loaded = None
         self.last_load_seconds: float | None = None
 
+    def _down(self, e: Exception) -> LMStudioDown:
+        return LMStudioDown(START_HINT.format(url=self.base_url) + f" [{type(e).__name__}]")
+
     # --- discovery -------------------------------------------------------
     def is_up(self) -> bool:
         try:
@@ -56,8 +69,10 @@ class LMStudioClient:
         """Normalized model list: id, type (llm|embeddings), state, loaded_context_length, parallel, instance_id."""
         try:
             r = self.http.get("/api/v1/models")
+        except CONNECT_ERRORS as e:
+            raise self._down(e) from e
         except httpx.HTTPError as e:
-            raise LMStudioError(f"LM Studio server not reachable at {self.base_url}: {e}") from e
+            raise LMStudioError(f"GET /api/v1/models failed: {e}") from e
         if r.status_code >= 400:
             raise LMStudioError(f"GET /api/v1/models -> HTTP {r.status_code}: {r.text[:300]}")
         out = []
@@ -102,6 +117,8 @@ class LMStudioClient:
     def _load_request(self, body: dict, wait: float) -> dict:
         try:
             r = self.http.post("/api/v1/models/load", json=body, timeout=httpx.Timeout(wait, connect=5))
+        except CONNECT_ERRORS as e:
+            raise self._down(e) from e
         except httpx.HTTPError as e:
             raise LMStudioError(f"load request failed: {e}") from e
         if r.status_code >= 400:
@@ -186,6 +203,8 @@ class LMStudioClient:
         while True:
             try:
                 r = self.http.post("/v1/chat/completions", json=body)
+            except CONNECT_ERRORS as e:
+                raise self._down(e) from e
             except httpx.HTTPError as e:
                 if attempt >= self.retries:
                     raise LMStudioError(f"request failed after {attempt + 1} attempt(s): {e}") from e
@@ -214,6 +233,8 @@ class LMStudioClient:
     def embed(self, model: str, texts: list[str]) -> list[list[float]]:
         try:
             r = self.http.post("/v1/embeddings", json={"model": model, "input": texts})
+        except CONNECT_ERRORS as e:
+            raise self._down(e) from e
         except httpx.HTTPError as e:
             raise LMStudioError(f"embeddings request failed: {e}") from e
         if r.status_code >= 400:

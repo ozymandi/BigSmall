@@ -60,11 +60,21 @@ def cmd_run(args, cfg):
     if args.stdin:
         text = sys.stdin.read()
     runner = Runner(cfg)
+    shown = False
+
+    def progress(done: int, total: int, message: str) -> None:
+        nonlocal shown
+        if sys.stderr.isatty():
+            shown = True
+            print(f"\r[{done}/{total}] {message[:60]:<60}", end="", file=sys.stderr, flush=True)
+
     r = runner.run(
         args.task, instruction=args.instruction or "", files=args.files or [], text=text,
         model=args.model, strict=args.strict, params=_parse_params(args.param),
-        output=args.output, in_place=args.in_place,
+        output=args.output, in_place=args.in_place, on_progress=progress,
     )
+    if shown:
+        print(file=sys.stderr)
     if args.json:
         print(json.dumps(r.to_dict(), ensure_ascii=False, indent=2))
     else:

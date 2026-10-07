@@ -1,0 +1,16 @@
+# lmagent.yaml for a repo with large logs / data dumps.
+# Smaller chunks keep each call fast and leave room for the log tokenizer overhead (logs count ~1.45x
+# more tokens in the model than in tiktoken). Logs are useful to summarize but useless to search.
+
+chunking:
+  chunk_tokens: 6000
+  min_chunk_tokens: 4000      # allow 4 workers even on a 32k context
+  token_safety: 1.6           # digit-heavy text; the default 1.5 was measured on mixed code + logs
+  max_file_bytes: 20000000    # let 20 MB logs through (default 5 MB)
+
+index:
+  exclude: ["*.lock", "*.min.js", "*.min.css", "*.map", "*.svg", "*.ipynb", "package-lock.json", "yarn.lock",
+            "*.log", "*.log.*", "*.jsonl", "*.csv", "logs/", "data/"]
+
+output:
+  inline_limit: 4000          # shorter inline results; the full text still lands in .lmagent/out/

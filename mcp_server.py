@@ -5,12 +5,13 @@ Register once, globally:
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import sys
 from typing import Any
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp import Context, FastMCP
 
 from lmagent.client import LMStudioClient, LMStudioError
 from lmagent.config import load_config
@@ -59,10 +60,31 @@ def _run(task: str, cwd: str | None, **kw) -> dict[str, Any]:
         return {"error": str(e)}
 
 
+def _progress_sink(ctx: Context | None, loop: asyncio.AbstractEventLoop):
+    """Progress callback usable from any worker thread: schedules ctx.report_progress on the loop.
+    FastMCP drops the notification silently when the client sent no progressToken."""
+    if ctx is None:
+        return None
+
+    def sink(done: int, total: int, message: str) -> None:
+        try:
+            asyncio.run_coroutine_threadsafe(ctx.report_progress(done, total, message), loop)
+        except Exception:
+            pass
+
+    return sink
+
+
+async def _run_async(ctx: Context | None, task: str, cwd: str | None, **kw) -> dict[str, Any]:
+    """Run a job in a worker thread so the server keeps answering (and progress gets through)."""
+    sink = _progress_sink(ctx, asyncio.get_running_loop())
+    return await asyncio.to_thread(_run, task, cwd, on_progress=sink, **kw)
+
+
 @mcp.tool()
-def lm_delegate(instruction: str, files: list[str] | None = None, text: str = "",
-                task: str = "ask", model: str = "", params: dict[str, str] | None = None,
-                output_file: str = "", in_place: bool = False, cwd: str = "") -> dict[str, Any]:
+async def lm_delegate(instruction: str, ctx: Context, files: list[str] | None = None, text: str = "",
+                      task: str = "ask", model: str = "", params: dict[str, str] | None = None,
+                      output_file: str = "", in_place: bool = False, cwd: str = "") -> dict[str, Any]:
     """Delegate a simple but token-heavy job to a local LM Studio model. The model reads the files;
     only the compact result comes back. Use for: summarizing big files/logs, translating, extracting
     structured data, classifying files, bulk mechanical rewrites, explaining diffs, generating boilerplate.
@@ -78,34 +100,52 @@ def lm_delegate(instruction: str, files: list[str] | None = None, text: str = ""
         in_place: for task=rewrite, overwrite the source files instead of writing to .lmagent/out/.
         cwd: project directory to resolve relative paths against. Default: server working directory.
     """
-    return _run(task, cwd or None, instruction=instruction, files=files or [], text=text,
-                model=model or None, params=params or {}, output=output_file or None, in_place=in_place)
+    return await _run_async(ctx, task, cwd or None, instruction=instruction, files=files or [], text=text,
+                            model=model or None, params=params or {}, output=output_file or None,
+                            in_place=in_place)
 
 
 @mcp.tool()
-def lm_summarize_files(files: list[str], focus: str = "everything important", instruction: str = "",
-                       cwd: str = "") -> dict[str, Any]:
+async def lm_summarize_files(files: list[str], ctx: Context, focus: str = "everything important",
+                             instruction: str = "", cwd: str = "") -> dict[str, Any]:
     """Summarize large files, directories or logs with a local model and return only the key facts.
     Cheap way to learn what is in big inputs without reading them yourself."""
-    return _run("summarize", cwd or None, instruction=instruction, files=files, params={"focus": focus})
+    return await _run_async(ctx, "summarize", cwd or None, instruction=instruction, files=files,
+                            params={"focus": focus})
 
 
 @mcp.tool()
-def lm_batch(items: list[dict[str, Any]], task: str = "ask", model: str = "", cwd: str = "") -> list[dict[str, Any]]:
+async def lm_batch(items: list[dict[str, Any]], ctx: Context, task: str = "ask", model: str = "",
+                   cwd: str = "") -> list[dict[str, Any]]:
     """Run several independent jobs in parallel on the local model. Each item is
     {"instruction": str, "files": [..], "text": str, "params": {..}, "output_file": str}.
     Returns one compact result per item, in order."""
     from concurrent.futures import ThreadPoolExecutor
+    import threading
+
+    sink = _progress_sink(ctx, asyncio.get_running_loop())
+    done = 0
+    lock = threading.Lock()
 
     def one(item: dict[str, Any]) -> dict[str, Any]:
-        return _run(item.get("task", task), cwd or None,
-                    instruction=item.get("instruction", ""), files=item.get("files") or [],
-                    text=item.get("text", ""), model=model or item.get("model") or None,
-                    params=item.get("params") or {}, output=item.get("output_file") or None,
-                    in_place=bool(item.get("in_place", False)))
+        nonlocal done
+        res = _run(item.get("task", task), cwd or None,
+                   instruction=item.get("instruction", ""), files=item.get("files") or [],
+                   text=item.get("text", ""), model=model or item.get("model") or None,
+                   params=item.get("params") or {}, output=item.get("output_file") or None,
+                   in_place=bool(item.get("in_place", False)))
+        with lock:
+            done += 1
+            n = done
+        if sink:
+            sink(n, len(items), f"batch item {n}/{len(items)}: {item.get('instruction', '')[:50]}")
+        return res
 
-    with ThreadPoolExecutor(max_workers=4) as ex:
-        return list(ex.map(one, items))
+    def run_all() -> list[dict[str, Any]]:
+        with ThreadPoolExecutor(max_workers=4) as ex:
+            return list(ex.map(one, items))
+
+    return await asyncio.to_thread(run_all)
 
 
 def _index(cwd: str | None) -> Index:
@@ -115,18 +155,18 @@ def _index(cwd: str | None) -> Index:
 
 
 @mcp.tool()
-def lm_index(paths: list[str] | None = None, cwd: str = "") -> dict[str, Any]:
+async def lm_index(paths: list[str] | None = None, cwd: str = "") -> dict[str, Any]:
     """Build or incrementally update the local embedding index of a project (only changed files are
     re-embedded). Stored in .lmagent/index/. Usually not needed: lm_search refreshes the index itself."""
     try:
-        return _index(cwd or None).update(paths)
+        return await asyncio.to_thread(_index(cwd or None).update, paths)
     except (LMStudioError, OSError, ValueError) as e:
         return {"error": str(e)}
 
 
 @mcp.tool()
-def lm_search(query: str, k: int = 8, files_only: bool = False, kind: str = "all", ask: str = "",
-              cwd: str = "") -> dict[str, Any]:
+async def lm_search(query: str, k: int = 8, files_only: bool = False, kind: str = "all", ask: str = "",
+                    cwd: str = "") -> dict[str, Any]:
     """Semantic search over the project's files using a local embedding model. Finds where something is
     handled by meaning, not by exact words. Returns file, line range, score and snippet per hit.
     The index is refreshed incrementally before searching. Use the hits as `files` for lm_delegate.
@@ -136,7 +176,7 @@ def lm_search(query: str, k: int = 8, files_only: bool = False, kind: str = "all
         ask: a question. The top hits are sent to the local model and only its answer with `file:start-end`
             citations comes back (no snippets). Cheapest way to learn how something works.
     """
-    try:
+    def work() -> dict[str, Any]:
         idx = _index(cwd or None)
         stats = idx.update(None)
         index_info = {"files": stats["total_files"], "chunks": stats["total_chunks"], "reindexed": stats["indexed"]}
@@ -147,6 +187,9 @@ def lm_search(query: str, k: int = 8, files_only: bool = False, kind: str = "all
             return res
         hits = idx.search(query, k=k, files_only=files_only, kind=kind)
         return {"hits": hits, "index": index_info}
+
+    try:
+        return await asyncio.to_thread(work)
     except (LMStudioError, OSError, ValueError) as e:
         return {"error": str(e)}
 

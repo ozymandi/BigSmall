@@ -129,11 +129,19 @@ or `model=` in `lm_delegate` when translation quality matters more than speed.
 
 Decided 2026-10-07: `load.context_length` default raised to 89344 (designer).
 
+### Phase 10: "Later" items. Done 2026-10-07
+- Progress: `Runner.run(on_progress=cb)` ticks after every model call with a growing total estimate; MCP
+  tools that call the model are now `async` and run in a worker thread (sync tools blocked the whole
+  server, so notifications could never get through) and forward ticks via `ctx.report_progress`; CLI
+  shows `[done/total] message` on a TTY.
+- `LMStudioDown`: connection errors (refused, connect timeout) raise at once with the start instructions
+  instead of 2 retries with backoff and a stack of httpx text.
+- `examples/` with three `lmagent.yaml` variants and a README.
+
 ## Next step
 
-Roadmap items 1-6 are done. Left unscheduled (see `ROADMAP.md`, "Later"): progress notifications for long
-MCP runs, a friendly error when LM Studio is down, per-project `lmagent.yaml` examples. The MCP server
-process in Claude Code has to be restarted (new session) to pick up `lm_search(kind=, ask=)`.
+Roadmap fully done, including the "Later" items. Nothing scheduled. The MCP server process
+needs a new Claude Code session to pick up the async tools and `lm_search(kind=, ask=)`.
 
 ## Open questions
 

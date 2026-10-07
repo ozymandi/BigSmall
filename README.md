@@ -216,11 +216,29 @@ lmagent/
   index.py      incremental embedding index and semantic search
   answer.py     answer a question from the top search hits (search --ask, lm_search ask=)
   tests/        pytest suite with a fake LM Studio client: chunker, planner, index, rewrite guardrails, config
+  examples/     per-project lmagent.yaml examples (log-heavy, monorepo, translation)
   tasks/        task templates (prompt, role, mode)
   runner.py     orchestration: routing, chunking, parallel map-reduce, output, log
   cli.py        command line
 mcp_server.py   MCP stdio server for Claude Code
 ```
+
+## Per-project config
+
+`examples/` has ready-made `lmagent.yaml` files: `log-heavy.yaml` (smaller chunks, logs out of the index),
+`monorepo.yaml` (vendored forks excluded), `translation.yaml` (Gemma for the `text` role, strict loading).
+Copy one into the project root; see `examples/README.md`.
+
+## Progress and errors
+
+Every model call reports progress: the CLI draws `[done/total] message` on stderr (TTY only), the MCP server
+sends `notifications/progress` when the client passed a progress token (verified with the Python MCP
+client over stdio; whether a given UI displays them is up to that client). The
+total is an estimate that grows as chunks and reduce rounds become known. All MCP tools that call the model
+run in a worker thread, so `lm_models` / `lm_tasks` still answer during a long `lm_delegate`.
+
+When LM Studio is not running, every tool and command fails at once with one message (no retries): how to
+start the server and which config key holds the URL.
 
 ## Tests
 

@@ -130,6 +130,27 @@ class Runner:
         self._lock = threading.Lock()
         self._load_seconds = 0.0
         self._workers = int(cfg["chunking"]["max_parallel"])
+        self._progress = None
+        self._prog_done = 0
+        self._prog_total = 0
+
+    # --- progress --------------------------------------------------------
+    def _add_total(self, n: int) -> None:
+        with self._lock:
+            self._prog_total += n
+
+    def _tick(self, message: str) -> None:
+        """One model call finished. Calls on_progress(done, total, message); total is a running estimate."""
+        with self._lock:
+            self._prog_done += 1
+            done, total = self._prog_done, max(self._prog_total, self._prog_done)
+        cb = self._progress
+        if cb is None:
+            return
+        try:
+            cb(done, total, message)
+        except Exception:  # a broken progress sink must not fail the job
+            pass
 
     def _reload(self, model: str) -> None:
         """Re-load a model that LM Studio dropped (TTL expiry, manual unload) mid-run."""
@@ -238,13 +259,18 @@ class Runner:
 
     # --- text processing per mode ---------------------------------------
     def _process_text(self, model: str, spec: TaskSpec, instruction: str, text: str,
-                      params: dict, mode: str, budget: int, acc: dict, notes: list[str]) -> str:
+                      params: dict, mode: str, budget: int, acc: dict, notes: list[str],
+                      label: str = "") -> str:
         chunks = split_text(text, budget, self.cfg["chunking"]["overlap_tokens"])
+        # per-file callers already counted one unit for the file
+        self._add_total(len(chunks) - (1 if label else 0))
 
         def run_chunk(chunk: str) -> str:
             try:
-                return self._call(model, spec.system, self._fill(spec.user, spec, instruction, chunk, params),
-                                  acc, spec.json_schema)
+                out = self._call(model, spec.system, self._fill(spec.user, spec, instruction, chunk, params),
+                                 acc, spec.json_schema)
+                self._tick(label or f"chunk ({len(chunks)} total)")
+                return out
             except LMStudioError as e:
                 if "context size" not in str(e).lower() or count_tokens(chunk) < 500:
                     raise
@@ -280,11 +306,14 @@ class Runner:
                 cur_tok += t
             if cur:
                 batches.append(cur)
+            self._add_total(len(batches))
 
             def reduce_batch(batch: list[str]) -> str:
                 joined = "\n\n---\n\n".join(f"[part {i + 1}]\n{p}" for i, p in enumerate(batch))
-                return self._call(model, MERGE_SYSTEM,
-                                  self._fill(reduce_tpl, spec, instruction, joined, params), acc)
+                out = self._call(model, MERGE_SYSTEM,
+                                 self._fill(reduce_tpl, spec, instruction, joined, params), acc)
+                self._tick(f"reduce {len(batch)} parts" + (f" ({label})" if label else ""))
+                return out
 
             if len(batches) == 1:
                 return reduce_batch(batches[0])
@@ -294,10 +323,16 @@ class Runner:
     # --- entry point -----------------------------------------------------
     def run(self, task: str, instruction: str = "", files: list[str] | tuple = (), text: str = "",
             model: str | None = None, strict: bool = False, params: dict | None = None,
-            output: str | None = None, in_place: bool = False) -> RunResult:
+            output: str | None = None, in_place: bool = False,
+            on_progress=None) -> RunResult:
+        """on_progress(done, total, message) is called after every model call; total is an estimate
+        that grows as chunks and reduce rounds become known."""
         spec = get_task(task)
         params = params or {}
         notes: list[str] = []
+        self._progress = on_progress
+        self._prog_done = 0
+        self._prog_total = 0
         acc = {"prompt_tokens": 0, "completion_tokens": 0, "calls": 0}
         t0 = time.time()
 
@@ -320,11 +355,12 @@ class Runner:
         if spec.mode == "per_file":
             if not items:
                 raise ValueError(f"Task '{task}' needs files or text.")
+            self._add_total(len(items))
 
             def one(item: tuple[str, str]):
                 path, content = item
                 out = self._process_text(model, spec, instruction, content, params,
-                                         spec.sub_mode, budget, acc, notes)
+                                         spec.sub_mode, budget, acc, notes, label=path)
                 return path, out
 
             results = self._pmap(one, items)
