@@ -9,7 +9,7 @@ server:
 models:
   code: qwen/qwen3.8-27b               # code, logic, structured extraction
   text: google/gemma-4-31b             # prose, translation
-  bulk: nvidia/nemotron-3-nano-omni    # cheap mass processing (MoE, fast)
+  bulk: qwen/qwen3.8-27b               # mass processing; Nemotron (26 GB, 32k ctx) did not pay off on a 32 GB GPU
   embed: text-embedding-nomic-embed-text-v1.5
 
 load:

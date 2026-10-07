@@ -66,8 +66,8 @@ Repo: https://github.com/ozymandi/BigSmall
 
 1. New Claude Code session on another project: try `lm_search` + `lm_delegate` directly and through the
    `local-worker` subagent; collect which tasks are worth delegating and where prompts need tuning.
-2. Decide on the `bulk` role model (Nemotron takes 26 GB and 32k context; a 8-14B model or Qwen itself
-   may serve better on this GPU).
+2. Done 2026-10-07: `bulk` role set to Qwen (designer's decision). Nemotron stays downloaded but unused
+   by default; summarize/classify no longer trigger a model switch.
 
 ## Open questions
 
