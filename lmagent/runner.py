@@ -122,10 +122,7 @@ class Runner:
     def __init__(self, cfg: dict, client: LMStudioClient | None = None):
         self.cfg = cfg
         self.cwd = Path(cfg["_cwd"])
-        srv = cfg["server"]
-        self.client = client or LMStudioClient(srv["base_url"], srv["timeout"],
-                                               retries=srv.get("retries", 2),
-                                               retry_delay=srv.get("retry_delay", 2.0))
+        self.client = client or LMStudioClient.from_config(cfg)
         self.client.on_not_loaded = self._reload
         self._lock = threading.Lock()
         self._load_seconds = 0.0

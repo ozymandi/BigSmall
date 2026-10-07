@@ -31,5 +31,8 @@ def load_config(explicit: str | None = None, cwd: str | Path | None = None) -> d
     for p in candidates:
         if p.is_file():
             cfg = _deep_merge(cfg, yaml.safe_load(p.read_text(encoding="utf-8")) or {})
+    env_key = os.environ.get("LMSTUDIO_API_KEY")
+    if env_key:
+        cfg.setdefault("server", {})["api_key"] = env_key
     cfg["_cwd"] = str(cwd)
     return cfg

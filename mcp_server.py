@@ -150,7 +150,7 @@ async def lm_batch(items: list[dict[str, Any]], ctx: Context, task: str = "ask",
 
 def _index(cwd: str | None) -> Index:
     cfg = load_config(cwd=cwd or os.environ.get("LMAGENT_CWD") or os.getcwd())
-    client = LMStudioClient(cfg["server"]["base_url"], cfg["server"]["timeout"])
+    client = LMStudioClient.from_config(cfg)
     return Index(cfg, client, cfg["_cwd"])
 
 
@@ -199,7 +199,7 @@ def lm_models(cwd: str = "") -> dict[str, Any]:
     """List LM Studio models, which one is loaded, and the configured role mapping (code/text/bulk)."""
     try:
         cfg = load_config(cwd=cwd or None)
-        client = LMStudioClient(cfg["server"]["base_url"], cfg["server"]["timeout"])
+        client = LMStudioClient.from_config(cfg)
         return {
             "roles": cfg["models"],
             "models": [{"id": m["id"], "state": m.get("state"), "type": m.get("type"),

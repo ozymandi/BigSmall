@@ -5,6 +5,7 @@ server:
   timeout: 900            # seconds per request
   retries: 2              # retries on timeouts, connection errors, 5xx and unloaded-model errors
   retry_delay: 2          # seconds, doubled on each retry
+  api_key: ""             # LM Studio API token when "Require Authentication" is on; env LMSTUDIO_API_KEY overrides
 
 models:
   code: qwen/qwen3.8-27b               # code, logic, structured extraction

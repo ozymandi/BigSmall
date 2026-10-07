@@ -21,7 +21,7 @@ def _parse_params(pairs: list[str]) -> dict:
 
 
 def cmd_models(args, cfg):
-    client = LMStudioClient(cfg["server"]["base_url"], cfg["server"]["timeout"])
+    client = LMStudioClient.from_config(cfg)
     roles: dict[str, list[str]] = {}
     for role, model_id in cfg["models"].items():
         roles.setdefault(model_id, []).append(role)
@@ -40,7 +40,7 @@ def cmd_tasks(args, cfg):
 
 
 def cmd_load(args, cfg):
-    client = LMStudioClient(cfg["server"]["base_url"], cfg["server"]["timeout"])
+    client = LMStudioClient.from_config(cfg)
     model = cfg["models"].get(args.model, args.model)
     ld = cfg["load"]
     did = client.load(model, args.context or ld["context_length"], ld["ttl"], ld["parallel"], ld["unload_others"])
@@ -48,7 +48,7 @@ def cmd_load(args, cfg):
 
 
 def cmd_unload(args, cfg):
-    client = LMStudioClient(cfg["server"]["base_url"], cfg["server"]["timeout"])
+    client = LMStudioClient.from_config(cfg)
     targets = [m["id"] for m in client.loaded_llms()] if args.all or not args.model else [args.model]
     for t in targets:
         client.unload(t)
@@ -90,7 +90,7 @@ def _index(cfg, root):
     from .index import Index
     from pathlib import Path
     root = Path(root) if root else Path(cfg["_cwd"])
-    return Index(cfg, LMStudioClient(cfg["server"]["base_url"], cfg["server"]["timeout"]), root)
+    return Index(cfg, LMStudioClient.from_config(cfg), root)
 
 
 def cmd_index(args, cfg):

@@ -44,15 +44,24 @@ class LMStudioClient:
     """
 
     def __init__(self, base_url: str = "http://localhost:1234", timeout: float = 900,
-                 retries: int = 2, retry_delay: float = 2.0):
+                 retries: int = 2, retry_delay: float = 2.0, api_key: str = ""):
         self.base_url = base_url.rstrip("/")
-        self.http = httpx.Client(base_url=self.base_url, timeout=httpx.Timeout(timeout, connect=5))
+        # LM Studio "Require Authentication": every request needs a Bearer token (needed for mcp.json plugins).
+        headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+        self.http = httpx.Client(base_url=self.base_url, timeout=httpx.Timeout(timeout, connect=5),
+                                 headers=headers)
         self.retries = retries
         self.retry_delay = retry_delay
         self._supports_template_kwargs = True
         # Called with the model id when a request fails because the model is no longer loaded (e.g. TTL).
         self.on_not_loaded = None
         self.last_load_seconds: float | None = None
+
+    @classmethod
+    def from_config(cls, cfg: dict) -> "LMStudioClient":
+        srv = cfg["server"]
+        return cls(srv["base_url"], srv["timeout"], retries=srv.get("retries", 2),
+                   retry_delay=srv.get("retry_delay", 2.0), api_key=srv.get("api_key") or "")
 
     def _down(self, e: Exception) -> LMStudioDown:
         return LMStudioDown(START_HINT.format(url=self.base_url) + f" [{type(e).__name__}]")
