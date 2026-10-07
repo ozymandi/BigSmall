@@ -38,12 +38,14 @@ In a fresh Claude Code session on another project:
       LLM with the question, only the answer plus the file/line citations come back.
 - [ ] Reuse the `ask` task; cap the context by the planner's budget.
 
-## 5. Guardrails for `rewrite --in-place` (1-2 h)
+## 5. Guardrails for `rewrite --in-place` (1-2 h). Done 2026-10-07
 
-- [ ] Keep a copy of the original under `.lmagent/backup/<timestamp>/<path>` before overwriting.
-- [ ] Return a unified diff summary (lines added/removed per file) instead of just the path.
-- [ ] Syntax check before writing: `py_compile` for `.py`, `json.loads` for `.json`, YAML parse for `.yaml`;
+- [x] Keep a copy of the original under `.lmagent/backup/<timestamp>/<path>` before overwriting.
+- [x] Return a unified diff summary (lines added/removed per file) instead of just the path.
+- [x] Syntax check before writing: `py_compile` for `.py`, `json.loads` for `.json`, YAML parse for `.yaml`;
       on failure keep the original and report.
+- [x] Fixes from the trial: keep the source line endings (LF was becoming CRLF), strip an echoed
+      `<content>` wrapper, report unchanged files, summarize reduce prompt merges duplicates.
 
 ## 6. Decide the `text` role model (0.5-1 h)
 

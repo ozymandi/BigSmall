@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import datetime as _dt
+import difflib
 import json
 import re
+import shutil
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+
+import yaml
 
 from .chunker import count_tokens, read_inputs, split_text
 from .client import ChatResult, LMStudioClient, LMStudioError
@@ -47,6 +51,63 @@ class RunResult:
 def strip_fences(text: str) -> str:
     m = FENCE_RE.match(text.strip())
     return m.group(1) if m else text
+
+
+def clean_output(text: str) -> str:
+    """Model output that should be a whole file: drop code fences and an echoed <content> wrapper."""
+    text = strip_fences(text)
+    s = text.strip()
+    if s.startswith("<content>"):
+        s = s[len("<content>"):]
+        if s.rstrip().endswith("</content>"):
+            s = s.rstrip()[: -len("</content>")]
+        text = s.strip("\r\n")
+    return text
+
+
+def check_syntax(path: str, text: str) -> str | None:
+    """Parse the new content with the parser its extension implies. Returns an error string or None."""
+    ext = Path(path).suffix.lower()
+    try:
+        if ext == ".py":
+            compile(text, path, "exec")
+        elif ext == ".json":
+            json.loads(text)
+        elif ext in (".yaml", ".yml"):
+            yaml.safe_load(text)
+    except (SyntaxError, ValueError, yaml.YAMLError) as e:
+        msg = str(e).splitlines()[0] if str(e) else ""
+        return f"{type(e).__name__}: {msg[:160]}"
+    return None
+
+
+def diff_stat(old: str, new: str) -> tuple[int, int]:
+    """Lines added and removed between two texts (line endings ignored)."""
+    added = removed = 0
+    for line in difflib.unified_diff(old.splitlines(), new.splitlines(), lineterm="", n=0):
+        if line.startswith("+") and not line.startswith("+++"):
+            added += 1
+        elif line.startswith("-") and not line.startswith("---"):
+            removed += 1
+    return added, removed
+
+
+def write_like(target: Path, text: str, source: Path | None) -> None:
+    """Write text with the line endings and trailing-newline convention of `source` (default LF).
+    Path.write_text would turn LF into CRLF on Windows and change every line of the file."""
+    eol, trailing = "\n", True
+    if source is not None and source.is_file():
+        raw = source.read_bytes()
+        if b"\r\n" in raw:
+            eol = "\r\n"
+        trailing = raw.endswith(b"\n")
+    text = text.replace("\r\n", "\n")
+    if trailing and not text.endswith("\n"):
+        text += "\n"
+    elif not trailing:
+        text = text.rstrip("\n")
+    with open(target, "w", encoding="utf-8", newline="") as f:
+        f.write(text.replace("\n", eol))
 
 
 def _parse_json(text: str):
@@ -274,17 +335,45 @@ class Runner:
                     rows.append({"file": path, **data} if isinstance(data, dict) else {"file": path, "raw": out})
                 result_text = json.dumps(rows, ensure_ascii=False, indent=2)
             elif spec.output_ext == "":
+                originals = dict(items)
+                backup_root = self.cwd / self.cfg["output"].get("backup_dir", ".lmagent/backup")
+                stamp: str | None = None
                 lines = []
                 for path, out in results:
-                    new_content = strip_fences(out)
+                    new_content = clean_output(out)
                     if path == "<inline>":
                         lines.append(new_content)
                         continue
-                    target = (self.cwd / path) if in_place else (out_dir / path)
+                    rel = Path(path)
+                    if rel.is_absolute():
+                        rel = Path(*rel.parts[1:])
+                    src = self.cwd / path
+                    added, removed = diff_stat(originals.get(path, ""), new_content)
+                    err = "empty output" if not new_content.strip() else check_syntax(path, new_content)
+                    if in_place:
+                        if err:
+                            lines.append(f"- {path}: NOT written ({err}); original kept")
+                            continue
+                        if added == 0 and removed == 0:
+                            lines.append(f"- {path}: unchanged")
+                            continue
+                        stamp = stamp or _dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+                        bak = backup_root / stamp / rel
+                        bak.parent.mkdir(parents=True, exist_ok=True)
+                        if src.is_file():
+                            shutil.copy2(src, bak)
+                        target = src
+                    else:
+                        target = out_dir / rel
                     target.parent.mkdir(parents=True, exist_ok=True)
-                    target.write_text(new_content, encoding="utf-8")
+                    write_like(target, new_content, src if src.is_file() else None)
                     files_written.append(str(target))
-                    lines.append(f"- {path} -> {target}")
+                    line = f"- {path} -> {target} (+{added} -{removed})"
+                    if err:
+                        line += f"; CHECK FAILED: {err}"
+                    lines.append(line)
+                if stamp:
+                    notes.append(f"originals backed up in {backup_root / stamp}")
                 result_text = "\n".join(lines) if lines else ""
             else:
                 result_text = "\n\n".join(f"### {path}\n{out}" for path, out in results)
@@ -296,7 +385,7 @@ class Runner:
             result_text = self._process_text(model, spec, instruction, content, params,
                                              spec.mode, budget, acc, notes)
             if spec.output_ext == "":
-                result_text = strip_fences(result_text)
+                result_text = clean_output(result_text)
 
         output_path: str | None = None
         if output:

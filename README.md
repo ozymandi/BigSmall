@@ -149,6 +149,12 @@ C) shell       ──► lmagent run / search ───────────�
    reloaded first). If the server answers "context size exceeded", the chunk is split in half and both halves
    are retried. `<think>` blocks are stripped from the answer.
 9. **Output.** `rewrite` writes each file to `.lmagent/out/<path>` or, with `in_place`, over the source.
+   Guardrails on every written file: code fences and an echoed `<content>` wrapper are stripped; the
+   original line endings and trailing-newline convention are kept (plain `write_text` would turn LF into
+   CRLF on Windows); the result line carries a diff stat (`+added -removed`); `.py`, `.json` and `.yaml`
+   results are parsed first and, with `in_place`, a result that does not parse or is empty is not written
+   (the line says `NOT written`, the original stays). Unchanged files are reported, not rewritten. Before an
+   in-place overwrite the original is copied to `.lmagent/backup/<timestamp>/<path>`.
    An explicit `output_file` is written as given. A result longer than `output.inline_limit` is also written
    to `.lmagent/out/<timestamp>_<task>.<ext>`.
 10. **Log.** One JSON line per run in `~/.lmagent/log.jsonl`: task, model, calls, tokens in/out, wall time,

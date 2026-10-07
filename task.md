@@ -92,11 +92,17 @@ Bugs and tuning found:
   index), maybe bigger chunks for code.
 - Item 5 of the roadmap (guardrails) is confirmed necessary before `in_place` is used for real.
 
+### Phase 6: rewrite guardrails (roadmap item 5). Done 2026-10-07
+- `runner.py`: `clean_output` (fences + echoed `<content>`), `write_like` (keeps the source EOL and
+  trailing newline), `diff_stat`, `check_syntax` (py/json/yaml), backup to `.lmagent/backup/<stamp>/`
+  before in-place writes, unchanged files skipped, failed checks keep the original.
+- Verified live on scratch files: CRLF file stayed CRLF, backup created, `cfg.json` (model returned
+  non-JSON) reported `NOT written`, second run reported `unchanged`.
+- `summarize` reduce prompt: "each fact appears once".
+
 ## Next step
 
-Roadmap items 1 and 2 done (trial, usage rule in the global `~/.claude/CLAUDE.md`). Proposed order for the
-rest, based on the trial: 5 (guardrails + the EOL and `<content>` fixes) -> 4 (answer on top of search) and
-the search tuning above -> 3 (tests) -> 6 (text role model).
+Roadmap item 4 (answer on top of search, plus the search tuning from the trial), then 3 (tests), then 6.
 
 ## Open questions
 

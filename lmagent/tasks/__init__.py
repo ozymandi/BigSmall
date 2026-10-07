@@ -67,7 +67,8 @@ _register(TaskSpec(
     mode="map_reduce",
     output_ratio=0.15,
     reduce="Focus: {focus}\n{instruction}\n\nPartial summaries:\n{content}\n\n"
-           "Produce one consolidated summary: at most 25 bullet points of key facts, then a 2-3 sentence overview.",
+           "Produce one consolidated summary: at most 25 bullet points of key facts, then a 2-3 sentence overview. "
+           "Each fact appears once: merge bullets that say the same thing, never repeat a point after the overview.",
     defaults={"focus": "everything important"},
 ))
 

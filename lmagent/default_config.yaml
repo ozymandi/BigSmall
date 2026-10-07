@@ -43,5 +43,6 @@ index:
 
 output:
   dir: .lmagent/out       # relative to the working directory
+  backup_dir: .lmagent/backup  # rewrite --in-place keeps the originals here, one folder per run
   inline_limit: 6000      # chars returned inline to the caller; longer results also go to a file
   log: ~/.lmagent/log.jsonl
