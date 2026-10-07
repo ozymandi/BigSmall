@@ -127,6 +127,8 @@ Decision (roadmap rule "if the difference is small, set text to Qwen"): `models.
 happens any more in the default setup; Gemma stays downloaded and can be forced with `-m google/gemma-4-31b`
 or `model=` in `lm_delegate` when translation quality matters more than speed.
 
+Decided 2026-10-07: `load.context_length` default raised to 89344 (designer).
+
 ## Next step
 
 Roadmap items 1-6 are done. Left unscheduled (see `ROADMAP.md`, "Later"): progress notifications for long

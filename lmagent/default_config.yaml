@@ -15,7 +15,7 @@ models:
 load:
   policy: smart           # prefer_loaded: reuse whatever LLM is in VRAM; smart: switch to the role model only for big inputs; strict: always load the role model
   switch_min_tokens: 40000  # smart policy: switch models only when the input is at least this many tokens
-  context_length: 32768
+  context_length: 89344  # Qwen 27B fits this on 32 GB VRAM; the planner reads the real loaded context anyway
   ttl: 1800               # unload after N seconds idle
   parallel: 4
   unload_others: true     # only one big model fits in VRAM: unload other LLMs before loading
